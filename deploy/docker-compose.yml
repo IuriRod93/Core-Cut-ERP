@@ -1,0 +1,64 @@
+# Core Cut ERP em produção: PostgreSQL + API/interface + Caddy (HTTPS automático).
+# Uso (no servidor, em /opt/corecut/deploy):  docker compose up -d --build
+name: corecut
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: corecut
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: corecut
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U corecut -d corecut"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # sem "ports": o banco só é acessível pela rede interna do compose
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://corecut:${POSTGRES_PASSWORD}@db:5432/corecut
+      TRUST_PROXY: "1"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - appdata:/data # arquivos enviados pelos usuários
+    expose:
+      - "4400"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN:-cutcore.com.br}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  appdata:
+  caddy_data:
+  caddy_config:

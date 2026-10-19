@@ -1,0 +1,23 @@
+# HTTPS automático (Let's Encrypt). O DNS do domínio precisa apontar para este servidor
+# e as portas 80/443 precisam estar abertas. DOMAIN vem do .env (ex.: cutcore.com.br).
+(seguranca) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+	request_body {
+		max_size 90MB
+	}
+}
+
+www.{$DOMAIN} {
+	import seguranca
+	reverse_proxy app:4400
+}
+
+{$DOMAIN} {
+	# 308 preserva o método (um POST de login não vira GET ao passar pelo redirecionamento)
+	redir https://www.{$DOMAIN}{uri} 308
+}

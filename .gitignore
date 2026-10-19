@@ -1,0 +1,10 @@
+node_modules
+dist
+*.tsbuildinfo
+backend/data/
+.claude/
+.playwright-mcp/
+*.log
+.env
+.env.*
+!.env.example

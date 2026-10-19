@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Core Cut ERP",
+  "short_name": "Core Cut",
+  "description": "Acesse o Core Cut ERP pelo botão da barra do navegador.",
+  "version": "1.0.0",
+  "permissions": ["storage"],
+  "action": {
+    "default_title": "Abrir Core Cut ERP",
+    "default_popup": "popup.html"
+  }
+}

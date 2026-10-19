@@ -1,0 +1,234 @@
+================================================================================
+CORE CUT ERP
+O sistema de gestão feito para marcenaria
+www.cutcore.com.br
+================================================================================
+
+
+O QUE É
+-------
+O Core Cut ERP é um sistema online que reúne, em um só lugar, tudo o que uma
+marcenaria faz do primeiro contato com o cliente até a entrega e o pós-venda:
+orçamento, contrato, projeto, plano de corte, compras, produção, entrega,
+assistência técnica e financeiro.
+
+Funciona direto no navegador, no computador, no tablet ou no celular. Não é
+preciso instalar nada nem ter servidor próprio. Os dados ficam guardados com
+backup e cada empresa enxerga somente as suas informações.
+
+
+PARA QUEM É
+-----------
+- Marcenarias e fábricas de móveis planejados e sob medida.
+- Donos que hoje controlam tudo em planilhas, caderno e WhatsApp.
+- Equipes com vendedor, projetista, operador de serra, montador e financeiro,
+  cada um vendo só o que precisa.
+
+
+COMO O TRABALHO FLUI NO SISTEMA
+-------------------------------
+1. O cliente entra como contato (lead) ou cliente cadastrado.
+2. Você monta o orçamento e envia uma proposta em PDF profissional.
+3. Orçamento aprovado: o sistema cria o projeto e a ordem de produção.
+4. O contrato é gerado com o valor, as parcelas e os dados do projeto já
+   preenchidos.
+5. A lista de peças vira plano de corte, com o melhor aproveitamento da chapa.
+6. O plano de corte gera a solicitação de compra do que falta.
+7. A produção acontece por etapas, com apontamento de cada setor.
+8. A entrega e a instalação são agendadas e acompanhadas.
+9. O cliente acompanha tudo por um link, sem precisar de senha.
+10. Depois da entrega, a assistência técnica e a garantia ficam registradas.
+11. A nota fiscal sai do próprio orçamento aprovado.
+
+Cada passo alimenta o próximo: você digita uma vez e a informação segue.
+
+
+O QUE O SISTEMA FAZ
+===================
+
+COMERCIAL
+---------
+- Cadastro de clientes e leads, com histórico.
+- Orçamentos com itens por ambiente, custo, margem e impostos. O sistema mostra
+  na hora o lucro e a margem de cada proposta.
+- Proposta em PDF com a sua logo, limpa e organizada, para enviar ao cliente.
+- Contrato em PDF com valor, parcelas, prazos e escopo preenchidos
+  automaticamente a partir do projeto e do orçamento.
+- Parcelas do contrato viram contas a receber.
+
+PROJETOS
+--------
+- Cada projeto tem tarefas com responsável, prazo, checklist e comentários.
+- Vistas em lista, quadro (kanban), calendário, cronograma e tabela.
+- Etapas personalizadas, do briefing à garantia.
+- A produção aparece dentro do projeto: início, andamento e etapas concluídas.
+- Painel do projeto com o custo previsto contra o realizado e a margem.
+
+PLANO DE CORTE
+--------------
+- Otimização do aproveitamento das chapas por material e espessura.
+- Modo seccionadora (cortes de ponta a ponta, executáveis na serra) e modo CNC.
+- Ordem numerada dos cortes no mapa, para o operador da serra seguir.
+- Sobras aproveitáveis: guarde os retalhos no estoque e o sistema usa o retalho
+  antes de abrir uma chapa nova no próximo plano.
+- Importação de listas de peças do Promob e de planilhas.
+- Etiquetas de peças com QR Code, fita de borda, furos e usinagens.
+- G-code para a CNC e relatório em PDF para a fábrica.
+- Custo do plano somado ao orçamento do projeto.
+
+COMPRAS E ESTOQUE
+-----------------
+- Solicitação de compra gerada pelo plano de corte, com o saldo do orçamento
+  descontado, para você saber quanto ainda pode gastar.
+- Cotação, aprovação, pedido e recebimento, com entrada automática no estoque.
+- Estoque de chapas, ferragens e insumos, com foto, saldo mínimo e histórico de
+  movimentações.
+- Catálogo de materiais com preços de referência.
+- Cadastro de fornecedores.
+
+PRODUÇÃO E CHÃO DE FÁBRICA
+--------------------------
+- Ordens de produção com roteiro por setor (corte, coladeira, usinagem,
+  montagem, embalagem).
+- Operadores iniciam, pausam e concluem cada etapa no tablet ou no celular.
+- Tempo previsto contra tempo real, por etapa e por projeto.
+- Qualidade: inspeções e registro de não conformidades.
+- Manutenção preventiva das máquinas e dos veículos.
+
+ENTREGA E PÓS-VENDA
+-------------------
+- Agenda de entregas e instalações, com equipe, veículo e checklist.
+- Rota por GPS e mapa para acompanhar a equipe em campo.
+- Garantias e assistência técnica: chamados com fotos, prazo de garantia,
+  visita agendada e custo do atendimento.
+- O cliente pode abrir um pedido de ajuda pelo link de acompanhamento.
+
+CLIENTE SEMPRE INFORMADO
+------------------------
+- Link de acompanhamento do projeto, sem senha: mostra a etapa atual, o
+  andamento da fabricação e a agenda. Não mostra valores nem custos.
+- Mensagem pronta com a etapa e a previsão de entrega, para enviar por
+  WhatsApp ou por e-mail em um clique.
+
+FINANCEIRO
+----------
+- Contas a receber e a pagar, com situação, vencimento e conta.
+- Comissões de vendedores, projetistas e montadores, liberadas conforme o
+  cliente paga.
+- Nota fiscal eletrônica de produto (NF-e) emitida a partir do orçamento
+  aprovado ou do projeto, com DANFE no padrão tradicional e a sua logo em preto
+  e branco. A emissão usa um provedor fiscal e o certificado digital da empresa.
+  Recomendamos validar os códigos fiscais com o seu contador.
+
+EQUIPE E GESTÃO
+---------------
+- Usuários com perfis (administrador, gerente, vendedor, projetista, operador,
+  financeiro e outros): cada pessoa vê só o que o perfil permite.
+- Ponto eletrônico com localização.
+- Organização por empresas e unidades.
+- Relatórios de produção, financeiro e apontamentos.
+- Registro de acessos e ações (quem fez o quê).
+- Lixeira para recuperar o que foi excluído e backup dos dados.
+
+
+O QUE VOCÊ GANHA NO DIA A DIA
+-----------------------------
+- Menos retrabalho: o dado é digitado uma única vez.
+- Menos desperdício: melhor aproveitamento de chapa e reaproveitamento de
+  sobras.
+- Preço certo: você vê custo real, margem e lucro antes de fechar e depois de
+  entregar.
+- Prazo sob controle: cada etapa, cada setor e cada entrega acompanhados.
+- Cliente confiante: ele sabe em que ponto o projeto está sem ligar para você.
+- Financeiro organizado: contas, comissões e notas no mesmo sistema.
+
+
+PLANOS
+------
+Teste gratuito de 48 horas, sem compromisso.
+Pagamento por PIX (1, 3 ou 6 meses) ou cartão de crédito (mensal).
+
+  ESSENCIAL ............ R$ 99 por mês
+    Até 3 usuários. Clientes, orçamentos, contratos, projetos, ordens de
+    produção, estoque, fornecedores, financeiro, equipe e ponto.
+
+  PROFISSIONAL ......... R$ 199 por mês
+    Até 10 usuários. Tudo do Essencial, mais plano de corte, fichas técnicas,
+    compras, qualidade, entregas e instalações, garantias e registro de acessos.
+
+  INDUSTRIAL ........... R$ 399 por mês
+    Usuários e projetos ilimitados. Tudo do Profissional, mais chão de fábrica,
+    manutenção, veículos e relatórios.
+
+Os limites de cada plano (usuários, projetos, orçamentos, ordens de produção
+e itens de estoque) aparecem na tela de Assinatura do sistema.
+
+
+SEGURANÇA E SEUS DADOS
+----------------------
+- Conexão protegida (HTTPS) e senha com regras de segurança.
+- No aplicativo Android, confirmação por rosto ao entrar (cadastro do rosto no primeiro acesso).
+- Dados de cada empresa isolados das demais.
+- Cada pessoa acessa apenas o que o perfil permite.
+- Backup dos dados e histórico de acessos.
+- Você é o dono das suas informações e pode exportar uma cópia a qualquer
+  momento.
+
+
+COMO COMEÇAR
+------------
+1. Acesse www.cutcore.com.br e crie a conta. O teste de 48 horas começa na hora.
+2. Preencha os dados da empresa e envie a sua logo (Configurações).
+3. Cadastre as chapas e as ferragens que você mais usa (Estoque).
+4. Cadastre o primeiro cliente e faça um orçamento de verdade.
+5. Convide a equipe e escolha o perfil de cada pessoa.
+
+Nossa sugestão: use um projeto real do início ao fim na primeira semana. É o
+jeito mais rápido de sentir o ganho.
+
+
+PERGUNTAS FREQUENTES
+--------------------
+Preciso instalar algum programa?
+  Não. Funciona no navegador. Também pode ser instalado como aplicativo no
+  celular ou no computador.
+
+Funciona no celular?
+  Sim. As telas se adaptam ao celular e ao tablet, inclusive para o operador
+  apontar a produção.
+
+Meus dados ficam seguros?
+  Sim. A conexão é criptografada, os dados de cada empresa são separados e
+  existe backup. Você controla quem acessa o quê.
+
+Posso testar antes de pagar?
+  Sim, são 48 horas de teste gratuito.
+
+Posso trocar de plano depois?
+  Sim, a qualquer momento, conforme a sua operação cresce.
+
+O sistema emite nota fiscal?
+  Sim, nota fiscal eletrônica de produto (NF-e) com DANFE, por meio de um
+  provedor fiscal. É preciso ter certificado digital da empresa e os códigos
+  fiscais confirmados pelo contador. A emissão começa em ambiente de testes e
+  só passa para valer depois da sua validação.
+
+O plano de corte substitui o meu programa atual?
+  Ele cuida do aproveitamento, da ordem dos cortes, das etiquetas e do
+  G-code. Você pode importar listas de peças do Promob.
+
+Todos os planos têm tudo?
+  Não. O Essencial cobre o comercial e o básico da operação; o Profissional
+  inclui plano de corte e compras; o Industrial inclui o chão de fábrica.
+  Veja a seção PLANOS.
+
+
+FALE COM A GENTE
+----------------
+Site:    www.cutcore.com.br
+E-mail:  (coloque aqui o e-mail de contato)
+WhatsApp: (coloque aqui o número)
+
+================================================================================
+Core Cut ERP — da proposta à entrega, tudo em um só lugar.
+================================================================================

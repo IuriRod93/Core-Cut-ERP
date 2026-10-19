@@ -1,0 +1,13 @@
+node_modules
+dist
+backend/data
+release
+.git
+.claude
+.playwright-mcp
+*.log
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+deploy/.env

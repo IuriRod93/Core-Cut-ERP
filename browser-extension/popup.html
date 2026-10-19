@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Core Cut ERP</title>
+    <style>
+      body{width:300px;margin:0;padding:20px;font:14px "Segoe UI",sans-serif;color:#142934}
+      h1{font-size:18px;margin:0 0 8px}
+      p{color:#596970;line-height:1.45;margin:0 0 16px}
+      label{display:block;font-weight:600;margin-bottom:6px}
+      input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #cbd5da;border-radius:6px;margin-bottom:12px}
+      button{width:100%;padding:10px;border:0;border-radius:6px;background:#1389a8;color:white;font-weight:700;cursor:pointer}
+      button:hover{background:#086681}
+      #message{min-height:18px;margin-top:10px;font-size:12px}
+    </style>
+  </head>
+  <body>
+    <h1>Core Cut ERP</h1>
+    <p>Configure o endereço do servidor para abrir o ERP em uma nova aba.</p>
+    <label for="erp-url">Endereço do sistema</label>
+    <input id="erp-url" type="url" autocomplete="url" spellcheck="false" placeholder="https://erp.suaempresa.com.br">
+    <button id="open-erp" type="button">Abrir Core Cut ERP</button>
+    <div id="message" role="status"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

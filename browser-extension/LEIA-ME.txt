@@ -1,0 +1,30 @@
+CORE CUT ERP - EXTENSAO PARA CHROME E EDGE
+
+ANTES DE INSTALAR
+O servidor do Core Cut ERP precisa estar publicado e acessivel pela rede.
+Esta extensao nao inclui o ERP nem o banco de dados e precisa de internet.
+
+INSTALACAO NO CHROME
+1. Extraia o arquivo core-cut-erp-extension.zip para uma pasta permanente.
+2. Abra chrome://extensions.
+3. Ative "Modo do desenvolvedor".
+4. Clique em "Carregar sem compactacao".
+5. Selecione a pasta extraida que contem manifest.json.
+6. Fixe Core Cut ERP na barra de ferramentas.
+
+INSTALACAO NO MICROSOFT EDGE
+1. Extraia o arquivo core-cut-erp-extension.zip para uma pasta permanente.
+2. Abra edge://extensions.
+3. Ative "Modo do desenvolvedor".
+4. Clique em "Carregar descompactada".
+5. Selecione a pasta extraida que contem manifest.json.
+6. Fixe Core Cut ERP na barra de ferramentas.
+
+CONFIGURACAO
+1. Clique no icone Core Cut ERP na barra do navegador.
+2. Informe o endereco HTTPS do servidor, por exemplo https://erp.suaempresa.com.br.
+3. Clique em "Abrir Core Cut ERP".
+O endereco fica salvo somente nesse perfil do navegador. Repita a configuracao em cada computador.
+
+Esta versao e carregada manualmente. Para distribuicao automatica a outros usuarios,
+publique a extensao na Chrome Web Store ou Microsoft Edge Add-ons.
