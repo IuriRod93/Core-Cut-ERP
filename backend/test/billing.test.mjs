@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stopServer } from './helpers.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const port = 4700 + Math.floor(Math.random() * 200)
@@ -181,8 +182,8 @@ before(async () => {
   masterToken = login.json.token
 })
 
-after(() => {
-  child?.kill()
+after(async () => {
+  await stopServer(child)
   fake?.close()
   rmSync(dataDir, { recursive: true, force: true })
 })

@@ -7,6 +7,7 @@ import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypt
 import { AsyncLocalStorage } from 'node:async_hooks'
 import pg from 'pg'
 import { Database } from './lib/db.mjs'
+import { createLiveHub } from './lib/live.mjs'
 import { PostgresDatabase } from './lib/postgres-db.mjs'
 import { Sessions, hashPassword, verifyPassword, DUMMY_HASH, passwordProblem } from './lib/auth.mjs'
 import { LeoCatalog } from './lib/catalog.mjs'
@@ -19,6 +20,7 @@ import { createMailer } from './lib/mailer.mjs'
 import { createGeo, distanceMeters, isLat, isLng } from './lib/geo.mjs'
 import { createProductionTasks } from './lib/production-tasks.mjs'
 import { syncPlanOffcuts } from './lib/offcuts.mjs'
+import { applyOperationAction, forgottenTimers, runningOperationsOf } from './lib/shopfloor.mjs'
 import { createPortal, newPortalToken, validPortalToken } from './lib/portal.mjs'
 import { buildFocusPayload, companyProblems, createFocusClient, createSecretBox, invoiceProblems, mapFocusResponse, totalsOf } from './lib/fiscal.mjs'
 import { FACE_MATCH_DISTANCE, FACE_MESSAGES, createFaceEngine, createFaceStore, createFakeFaceEngine, createTickets, decodeImage, euclidean } from './lib/face.mjs'
@@ -67,9 +69,12 @@ const TRASH_LIMIT = 500
 
 const mailer = createMailer()
 const productionTasks = createProductionTasks(db)
+// avisos ao vivo: cada gravação conta às telas abertas da empresa qual coleção mudou
+const live = createLiveHub()
 // toda gravação de uma ordem de produção atualiza a tarefa do projeto (sentido único: produção → tarefas)
 let syncing = false
 db.afterWrite = (name, doc) => {
+  live.changed(doc.companyId ?? null, name)
   if ((name !== 'productionOrders' && name !== 'cutPlans') || syncing) return
   syncing = true
   try {
@@ -88,6 +93,8 @@ const focus = createFocusClient()
 const faceBox = createSecretBox({ dataDir, purpose: 'face', envKey: 'FACE_SECRET_KEY' })
 const faceEngine = process.env.NODE_ENV === 'test' && process.env.FACE_ENGINE === 'fake' ? createFakeFaceEngine() : createFaceEngine()
 const faceTickets = createTickets()
+// operador identificado por PIN num tablet compartilhado do chão de fábrica (vale um turno)
+const operatorTickets = createTickets({ ttlMs: 12 * 60 * 60_000 })
 
 // Aplicativo Android: o arquivo fica fora da pasta pública e só sai por link temporário de quem tem o plano.
 const appApkPath = process.env.APP_APK_PATH || join(root, 'backend', 'assets', 'core-cut-erp.apk')
@@ -265,6 +272,35 @@ const activeReservationsFor = (materialId, exceptOrderId = null) =>
     .filter((reservation) => reservation.materialId === materialId && reservation.status === 'reserved' && reservation.productionOrderId !== exceptOrderId)
     .reduce((sum, reservation) => sum + Number(reservation.quantity ?? 0), 0)
 
+/** Quem está apontando: o operador do PIN (cabeçalho X-Operator) ou o próprio usuário logado. */
+function shopfloorOperator(req, user) {
+  const header = req.headers['x-operator']
+  if (!header) return user
+  const ticket = operatorTickets.get(header)
+  const operator = ticket && ticket.sessionUserId === user.id ? db.get('users', ticket.userId) : null
+  if (!operator || operator.active === false) throw new HttpError(409, 'A identificação do operador expirou. Informe o PIN de novo.')
+  return operator
+}
+
+/** Abre (ou reaproveita) a inspeção de qualidade pendente e coloca a ordem em "qualidade". */
+function startQualityInspection(user, order) {
+  const pending = db.col('qualityInspections').find((inspection) => inspection.productionOrderId === order.id && inspection.status === 'pending')
+  if (pending) return { productionOrder: order, inspection: pending }
+  const inspection = db.insert('qualityInspections', {
+    code: db.nextCode('QIN'),
+    productionOrderId: order.id,
+    projectId: order.projectId ?? null,
+    status: 'pending',
+    notes: '',
+    startedAt: new Date().toISOString(),
+    startedBy: user.id,
+    startedByName: user.name,
+  })
+  const updated = db.update('productionOrders', order.id, { status: 'qualidade', qualityStatus: 'pending', qualityInspectionId: inspection.id })
+  audit(user, 'quality_start', 'productionOrders', updated, { inspectionId: inspection.id })
+  return { productionOrder: updated, inspection }
+}
+
 function releaseProductionReservations(order, user) {
   const now = new Date().toISOString()
   let released = 0
@@ -409,8 +445,8 @@ const readJson = async (req, limit = MAX_JSON) => {
 const publicUser = (u) => {
   if (!u) return null
   // segredos nunca saem do servidor (hash da senha; sobras do antigo 2FA também são descartadas)
-  const { passwordHash, totpEnabled, totpSecret, totpPendingSecret, totpLastStep, recoveryCodes, ...rest } = u
-  return rest
+  const { passwordHash, totpEnabled, totpSecret, totpPendingSecret, totpLastStep, recoveryCodes, shopfloorPinHash, ...rest } = u
+  return { ...rest, hasShopfloorPin: Boolean(shopfloorPinHash) }
 }
 
 const refUser = (u) => ({
@@ -449,7 +485,7 @@ const audit = (user, action, collection, doc, extra = {}) =>
 
 const changedKeys = (before, after) =>
   Object.keys(after).filter(
-    (k) => !['updatedAt', 'createdAt', 'passwordHash'].includes(k) && JSON.stringify(before[k]) !== JSON.stringify(after[k]),
+    (k) => !['updatedAt', 'createdAt', 'passwordHash', 'shopfloorPinHash'].includes(k) && JSON.stringify(before[k]) !== JSON.stringify(after[k]),
   )
 
 // ------------------------------------------------------------------- trash
@@ -523,12 +559,36 @@ async function runSchedulerOnce(now = new Date()) {
   }
   // Cada empresa roda no próprio contexto, para que os registros criados fiquem nela.
   const tenants = [null, ...db.all('companies').filter((company) => companyAccess(company, now.getTime()).allowed).map((company) => company.id)]
-  const total = { notified: 0, automationsRun: 0, tasksTouched: 0 }
+  const total = { notified: 0, automationsRun: 0, tasksTouched: 0, autoPaused: 0 }
   for (const tenantId of tenants) {
     const summary = db.runAsTenant(tenantId, () => runScheduler(db, { now, automations }))
-    for (const key of Object.keys(total)) total[key] += summary[key] ?? 0
+    for (const key of Object.keys(summary)) total[key] = (total[key] ?? 0) + (summary[key] ?? 0)
+    total.autoPaused += db.runAsTenant(tenantId, () => autoPauseForgotten(now))
   }
   return total
+}
+
+/** Chão de fábrica: pausa as etapas esquecidas rodando (fim do expediente ou horas demais seguidas). */
+function autoPauseForgotten(now) {
+  const settings = db.get('settings', 'company') ?? {}
+  const maxRunHours = settings.shopfloorMaxRunHours ?? 10
+  const found = forgottenTimers(db.col('productionOrders'), { shiftEnd: settings.shopfloorShiftEnd, maxRunHours, timeZone: settings.timeZone || 'America/Sao_Paulo' }, now.getTime())
+  let paused = 0
+  for (const { order, op, at, reason } of found) {
+    try {
+      const fresh = db.get('productionOrders', order.id)
+      const note = reason === 'fim_turno' ? 'Pausa automática: fim do expediente com o cronômetro ligado' : `Pausa automática: mais de ${maxRunHours} h seguidas sem pausa`
+      const result = applyOperationAction(fresh, op.id, 'pause', { user: { id: 'system', name: 'Pausa automática' }, now: at, reason, note })
+      const updated = db.update('productionOrders', order.id, { operations: result.operations })
+      audit(null, 'operation_autopause', 'productionOrders', updated, { operationId: op.id, operatorId: op.operatorId ?? null })
+      if (op.operatorId)
+        notify(db, { userId: op.operatorId, kind: 'shopfloor', title: 'Etapa pausada automaticamente', body: `${order.code ?? 'OP'} · ${op.name || 'etapa'} — ${note.replace('Pausa automática: ', '')}. Confira o tempo apontado.`, path: '/chao-de-fabrica', key: `autopause:${order.id}:${op.id}:${op.runningSince}` })
+      paused += 1
+    } catch (error) {
+      console.error('[chão de fábrica] Falha na pausa automática', order.id, error?.message ?? error)
+    }
+  }
+  return paused
 }
 
 const requireModule = (user, key) => {
@@ -545,7 +605,15 @@ const cleanBody = (body) => {
 const prepareUserWrite = (actor, input, existing) => {
   const out = { ...input }
   delete out.passwordHash
-  for (const key of ['totpSecret', 'totpPendingSecret', 'totpEnabled', 'totpLastStep', 'recoveryCodes']) delete out[key]
+  for (const key of ['totpSecret', 'totpPendingSecret', 'totpEnabled', 'totpLastStep', 'recoveryCodes', 'shopfloorPinHash', 'hasShopfloorPin']) delete out[key]
+  // PIN do chão de fábrica: só o hash é gravado; vazio remove
+  if ('shopfloorPin' in out) {
+    const pin = String(out.shopfloorPin ?? '').trim()
+    delete out.shopfloorPin
+    if (pin && !/^\d{4,6}$/.test(pin)) throw new HttpError(400, 'O PIN do chão de fábrica deve ter de 4 a 6 números.')
+    if (pin && /^(\d)\1+$/.test(pin)) throw new HttpError(400, 'Escolha um PIN sem repetir o mesmo número.')
+    out.shopfloorPinHash = pin ? hashPassword(pin) : null
+  }
   const password = out.password
   delete out.password
   if (typeof password === 'string' && password.length > 0) {
@@ -1091,6 +1159,12 @@ async function handleAuthenticated(req, res, path, query, user, token) {
   const url = path
   let company = companyOf(user)
 
+  // Canal ao vivo: só avisa quais coleções mudaram (as telas recarregam pela rota normal)
+  if (url === '/api/events' && method === 'GET') {
+    live.connect(req, res, { tenant: user.companyId ?? null, canRead: (name) => canUseCollection(user, name, 'read'), alive: () => Boolean(sessions.resolve(token)) })
+    return
+  }
+
   // Relato de erro do navegador (tela que quebrou): vai para o Monitoramento do Painel Admin.
   if (url === '/api/auth/client-error' && method === 'POST') {
     const body = await readJson(req, 16 * 1024)
@@ -1403,20 +1477,67 @@ async function handleAuthenticated(req, res, path, query, user, token) {
     const order = db.get('productionOrders', qualityStart[1])
     if (!order) throw new HttpError(404, 'Ordem de producao nao encontrada.')
     if (!['liberada', 'em_producao', 'qualidade'].includes(order.status)) throw new HttpError(409, 'A ordem precisa estar liberada ou em producao para iniciar a qualidade.')
-    const pending = db.col('qualityInspections').find((inspection) => inspection.productionOrderId === order.id && inspection.status === 'pending')
-    if (pending) return send(res, 200, { productionOrder: order, inspection: pending })
-    const inspection = db.insert('qualityInspections', {
-      code: db.nextCode('QIN'),
-      productionOrderId: order.id,
-      projectId: order.projectId ?? null,
-      status: 'pending',
-      notes: '',
-      startedAt: new Date().toISOString(),
-      startedBy: user.id,
-      startedByName: user.name,
+    return send(res, 200, startQualityInspection(user, order))
+  }
+
+  // ---- chão de fábrica: troca de operador por PIN ----------------------
+  if (url === '/api/shopfloor/operators' && method === 'GET') {
+    requireModule(user, 'shopfloor')
+    const operators = db
+      .col('users')
+      .filter((u) => u.active !== false && userModules(u).includes('shopfloor'))
+      .map((u) => ({ id: u.id, name: u.name, position: u.position ?? '', photoFileId: u.photoFileId ?? null, hasPin: Boolean(u.shopfloorPinHash) }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    return send(res, 200, operators)
+  }
+
+  if (url === '/api/shopfloor/operator' && method === 'POST') {
+    requireModule(user, 'shopfloor')
+    const body = await readJson(req)
+    const userId = String(body.userId ?? '')
+    rateLimit(`shopfloor-pin:${user.id}`, 20, 10 * 60_000)
+    rateLimit(`shopfloor-pin-user:${userId}`, 6, 10 * 60_000)
+    const operator = db.get('users', userId)
+    const valid = operator && operator.active !== false && userModules(operator).includes('shopfloor')
+    const ok = verifyPassword(String(body.pin ?? ''), valid && operator.shopfloorPinHash ? operator.shopfloorPinHash : DUMMY_HASH) && valid && operator.shopfloorPinHash
+    if (!ok) throw new HttpError(401, valid && !operator.shopfloorPinHash ? 'Este operador ainda não tem PIN. Peça para cadastrar em Equipe.' : 'PIN incorreto.')
+    const ticket = operatorTickets.create(operator.id, { sessionUserId: user.id })
+    audit(user, 'shopfloor_operator', 'users', operator)
+    return send(res, 200, { ticket, operator: { id: operator.id, name: operator.name } })
+  }
+
+  // operador saiu (botão Sair ou inatividade no tablet): o tíquete deixa de valer
+  if (url === '/api/shopfloor/operator' && method === 'DELETE') {
+    const ticket = operatorTickets.get(req.headers['x-operator'])
+    if (ticket && ticket.sessionUserId === user.id) operatorTickets.consume(req.headers['x-operator'])
+    return send(res, 200, { ok: true })
+  }
+
+  // ---- chão de fábrica: apontamento por etapa (relógio do servidor) ----
+  const operationAction = url.match(/^\/api\/production-orders\/([^/]+)\/operations\/([^/]+)\/(start|pause|finish)$/)
+  if (operationAction && method === 'POST') {
+    requireModule(user, 'shopfloor')
+    const order = db.get('productionOrders', operationAction[1])
+    if (!order) throw new HttpError(404, 'Ordem de producao nao encontrada.')
+    const action = operationAction[3]
+    const body = await readJson(req)
+    const operator = shopfloorOperator(req, user)
+    // apontamento feito sem internet: o aparelho diz há quanto tempo foi (sem depender do relógio dele)
+    const lagMs = Math.min(Math.max(Math.round(Number(body.elapsedMs) || 0), 0), 12 * 60 * 60_000)
+    const result = applyOperationAction(order, decodeURIComponent(operationAction[2]), action, {
+      now: Date.now() - lagMs,
+      user: operator,
+      quantity: body.quantity,
+      reason: body.reason,
+      note: body.note,
+      running: action === 'start' ? runningOperationsOf(db.col('productionOrders'), operator.id) : [],
     })
-    const updated = db.update('productionOrders', order.id, { status: 'qualidade', qualityStatus: 'pending', qualityInspectionId: inspection.id })
-    audit(user, 'quality_start', 'productionOrders', updated, { inspectionId: inspection.id })
+    if (result.unchanged) return send(res, 200, { productionOrder: order, inspection: null })
+    let updated = db.update('productionOrders', order.id, { operations: result.operations, ...(result.status ? { status: result.status } : {}) })
+    audit(user, `operation_${action}`, 'productionOrders', updated, { operationId: operationAction[2], operatorId: operator.id, operatorName: operator.name })
+    // roteiro completo: a ordem segue sozinha para a inspeção de qualidade
+    let inspection = null
+    if (result.finished) ({ productionOrder: updated, inspection } = startQualityInspection(user, updated))
     return send(res, 200, { productionOrder: updated, inspection })
   }
 
@@ -2318,6 +2439,12 @@ function notifyOnCreate(user, name, doc) {
     for (const userId of doc.assigneeIds.filter((a) => a !== user.id))
       notify(db, { userId, kind: 'assigned', title: 'Tarefa atribuída a você', body: `${doc.title} — por ${user.name}`, path: `/projetos/${doc.projectId}?tarefa=${doc.id}`, taskId: doc.id, projectId: doc.projectId, key: `assigned:${doc.id}` })
   }
+  // problema apontado no chão de fábrica: avisa quem coordena a produção
+  if (name === 'qualityRecords' && doc.productionOrderId) {
+    const leaders = db.col('users').filter((u) => u.active !== false && u.id !== user.id && ['admin', 'gerente', 'pcp'].includes(u.role))
+    for (const leader of leaders)
+      notify(db, { userId: leader.id, kind: 'quality', title: `Problema na produção — ${user.name}`, body: `${doc.title}: ${String(doc.description ?? '').slice(0, 120)}`, path: '/qualidade', projectId: doc.projectId ?? undefined, key: `quality:${doc.id}` })
+  }
 }
 
 /** Mantém só coordenadas válidas (e arredonda a ~1 m) nos registros de ponto e de entrega. */
@@ -2477,6 +2604,7 @@ function handleCrud(req, res, name, id, query, user) {
     }
     if (name === 'productionOrders') releaseProductionReservations(existing, user)
     db.remove(name, id)
+    live.changed(existing.companyId ?? null, name)
     if (name !== 'trash') moveToTrash(user, name, existing)
     audit(user, 'delete', name, existing)
     return send(res, 200, { ok: true })

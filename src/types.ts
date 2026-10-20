@@ -1,4 +1,5 @@
 import type { ModuleKey, RoleKey } from '../shared/access.mjs'
+import type { PauseReason } from '../shared/shopfloor.mjs'
 
 export type { ModuleKey, RoleKey }
 
@@ -26,6 +27,8 @@ export interface User extends Doc {
   extraModules?: ModuleKey[]
   deniedModules?: ModuleKey[]
   passwordMustChange?: boolean
+  /** PIN do chão de fábrica cadastrado (o PIN em si nunca sai do servidor) */
+  hasShopfloorPin?: boolean
   lastLoginAt?: string
   photoFileId?: string | null
   color?: string | null
@@ -416,6 +419,10 @@ export interface OpOperation {
   quantityDone: number
   startedAt?: string | null
   finishedAt?: string | null
+  /** trechos trabalhados (quem estava com a etapa em andamento) */
+  segments?: { operatorId: string | null; operatorName: string; start: string; end: string; seconds: number }[]
+  /** pausas com motivo; a aberta tem end = null */
+  pauses?: { start: string; end: string | null; seconds?: number; reason: PauseReason; note?: string; byId?: string; byName?: string }[]
 }
 
 export interface ProductionOrder extends Doc {
@@ -979,6 +986,12 @@ export interface CompanySettings extends Doc {
   quoteValidityDays: number
   workdayHours: number
   paymentTerms: string
+  /** Chão de fábrica: fim do expediente ("18:00"); vazio = sem pausa automática por horário */
+  shopfloorShiftEnd?: string
+  /** Chão de fábrica: horas seguidas rodando até a pausa automática (padrão 10; 0 = desligado) */
+  shopfloorMaxRunHours?: number
+  /** fuso da empresa (padrão America/Sao_Paulo) */
+  timeZone?: string
   /** Arquivo do logotipo da empresa (propostas, contratos, planos, etiquetas e relatórios). */
   logoFileId?: string | null
   // ---- dados fiscais (nota fiscal / DANFE) ----

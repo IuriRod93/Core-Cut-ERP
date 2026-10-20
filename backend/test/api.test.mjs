@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stopServer } from './helpers.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const port = 4300 + Math.floor(Math.random() * 400)
@@ -55,8 +56,8 @@ before(async () => {
   assert.equal(changed.status, 200)
 })
 
-after(() => {
-  child?.kill()
+after(async () => {
+  await stopServer(child)
   rmSync(dataDir, { recursive: true, force: true })
 })
 

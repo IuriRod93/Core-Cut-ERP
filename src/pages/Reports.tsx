@@ -11,6 +11,7 @@ import { bomCost } from '../domain/bom'
 import { budgetTotals } from '../domain/budget'
 import { addDaysISO, brl, downloadBlob, fmtDate, fmtDuration, isoDay, todayISO, toCsv } from '../lib/format'
 import { isDoneStatus, progressOf, statusesFor } from '../domain/tasks'
+import { productivity, stopsByReason } from '../domain/shopfloor'
 import { colors } from '../theme'
 import type { CollectionName } from '../types'
 
@@ -28,6 +29,8 @@ const REPORTS: Report[] = [
   { id: 'projects', title: 'Carteira de projetos', description: 'Etapa, prazo, valor, progresso e atrasos por projeto.', module: 'projects', needs: ['projects', 'clients', 'tasks', 'users'], dated: false },
   { id: 'production', title: 'Produtividade da fábrica', description: 'Tempo planejado x apontado por ordem e por setor.', module: 'production', needs: ['productionOrders', 'workCenters', 'projects'], dated: true },
   { id: 'shopfloor', title: 'Apontamentos do chão de fábrica', description: 'Cada etapa feita: setor, operador, início e fim, tempo previsto x real e desvio.', module: 'shopfloor', needs: ['productionOrders', 'workCenters', 'projects'], dated: true },
+  { id: 'efficiency', title: 'Previsto x realizado por setor e operador', description: 'Etapas concluídas no período: tempo previsto, tempo real, desvio e eficiência de cada setor e de cada operador.', module: 'production', needs: ['productionOrders', 'workCenters'], dated: true },
+  { id: 'stops', title: 'Paradas por motivo', description: 'Quanto tempo a produção ficou pausada e por quê (falta de material, máquina parada, ajuste…), separando paradas previstas.', module: 'production', needs: ['productionOrders', 'workCenters'], dated: true },
   { id: 'inventory', title: 'Posição de estoque', description: 'Saldo, custo, valor em estoque e itens abaixo do mínimo.', module: 'inventory', needs: ['materials', 'suppliers'], dated: false },
   { id: 'purchases', title: 'Compras por fornecedor', description: 'Volume e valor comprado por fornecedor no período.', module: 'purchases', needs: ['purchases', 'suppliers'], dated: true },
   { id: 'sales', title: 'Orçamentos e vendas', description: 'Propostas emitidas, aprovadas e margem no período.', module: 'budgets', needs: ['budgets', 'clients'], dated: true },
@@ -140,6 +143,61 @@ export function ReportsPage() {
             { label: 'Eficiência (previsto ÷ real)', value: actualSec ? `${Math.round((plannedSec / actualSec) * 100)}%` : '—' },
             { label: 'Setor com mais horas', value: topSector ? `${topSector[0]} · ${fmtDuration(topSector[1])}` : '—' },
             ...(topOperator ? [{ label: 'Operador com mais horas', value: `${topOperator[0]} · ${fmtDuration(topOperator[1])}` }] : []),
+          ],
+        }
+      }
+      case 'efficiency': {
+        const lines = productivity(d.productionOrders ?? [], (id) => m.workCenters?.get(id)?.name ?? '', { from, to })
+        const rows = lines.map(
+          (l) =>
+            ({
+              Tipo: l.kind === 'setor' ? 'Setor' : 'Operador',
+              Nome: l.name,
+              Etapas: l.steps,
+              'Previsto (h)': Math.round((l.plannedSeconds / 3600) * 100) / 100,
+              'Real (h)': Math.round((l.actualSeconds / 3600) * 100) / 100,
+              'Desvio (%)': l.plannedSeconds ? Math.round(((l.actualSeconds - l.plannedSeconds) / l.plannedSeconds) * 100) : 0,
+              'Eficiência (%)': l.actualSeconds ? Math.round((l.plannedSeconds / l.actualSeconds) * 100) : 0,
+            }) as Row,
+        )
+        const sectors = lines.filter((l) => l.kind === 'setor')
+        const planned = sectors.reduce((sum, l) => sum + l.plannedSeconds, 0)
+        const actual = sectors.reduce((sum, l) => sum + l.actualSeconds, 0)
+        const worst = [...sectors].filter((l) => l.plannedSeconds > 0).sort((a, b) => b.actualSeconds / b.plannedSeconds - a.actualSeconds / a.plannedSeconds)[0]
+        return {
+          columns: ['Tipo', 'Nome', 'Etapas', 'Previsto (h)', 'Real (h)', 'Desvio (%)', 'Eficiência (%)'],
+          rows,
+          summary: [
+            { label: 'Etapas concluídas', value: String(sectors.reduce((sum, l) => sum + l.steps, 0)) },
+            { label: 'Previsto x real', value: `${fmtDuration(planned)} / ${fmtDuration(actual)}` },
+            { label: 'Eficiência geral', value: actual ? `${Math.round((planned / actual) * 100)}%` : '—' },
+            { label: 'Setor mais acima do previsto', value: worst && worst.actualSeconds > worst.plannedSeconds ? `${worst.name} · +${Math.round(((worst.actualSeconds - worst.plannedSeconds) / worst.plannedSeconds) * 100)}%` : '—' },
+          ],
+        }
+      }
+      case 'stops': {
+        const lines = stopsByReason(d.productionOrders ?? [], (id) => m.workCenters?.get(id)?.name ?? '', { from, to })
+        const lost = lines.filter((l) => !l.planned).reduce((sum, l) => sum + l.seconds, 0)
+        const rows = lines.map(
+          (l) =>
+            ({
+              Motivo: l.label,
+              Tipo: l.planned ? 'Prevista' : 'Perda',
+              Paradas: l.count,
+              'Tempo total': fmtDuration(l.seconds),
+              'Tempo médio': fmtDuration(l.count ? l.seconds / l.count : 0),
+              '% das perdas': !l.planned && lost ? Math.round((l.seconds / lost) * 100) : 0,
+              'Setor mais afetado': l.topSector,
+            }) as Row,
+        )
+        const top = lines.find((l) => !l.planned)
+        return {
+          columns: ['Motivo', 'Tipo', 'Paradas', 'Tempo total', 'Tempo médio', '% das perdas', 'Setor mais afetado'],
+          rows,
+          summary: [
+            { label: 'Tempo perdido em paradas', value: fmtDuration(lost) },
+            { label: 'Paradas previstas', value: fmtDuration(lines.filter((l) => l.planned).reduce((sum, l) => sum + l.seconds, 0)) },
+            { label: 'Maior causa de perda', value: top ? `${top.label} · ${fmtDuration(top.seconds)}` : '—' },
           ],
         }
       }

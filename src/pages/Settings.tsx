@@ -311,6 +311,27 @@ function CompanyTab() {
             <TextField label="Condição de pagamento padrão" value={v.paymentTerms} onChange={(e) => set('paymentTerms', e.target.value)} />
           </Stack>
         </Panel>
+        <Panel title="Chão de fábrica" subtitle="Pausa automática de cronômetro esquecido ligado" sx={{ mt: 2.5 }}>
+          <Stack spacing={2}>
+            <TextField
+              type="time"
+              label="Fim do expediente"
+              value={v.shopfloorShiftEnd ?? ''}
+              onChange={(e) => set('shopfloorShiftEnd', e.target.value)}
+              slotProps={{ inputLabel: { shrink: true } }}
+              helperText="Etapas ainda rodando neste horário são pausadas como “Fim do turno”. Vazio = desligado."
+            />
+            <NumberField
+              label="Pausar depois de (horas seguidas)"
+              value={v.shopfloorMaxRunHours ?? 10}
+              min={0}
+              max={24}
+              decimals={0}
+              onChange={(n) => set('shopfloorMaxRunHours', n ?? 10)}
+              helperText="Limite para etapa rodando sem nenhuma pausa. 0 = desligado."
+            />
+          </Stack>
+        </Panel>
         <Button
           fullWidth
           variant="contained"

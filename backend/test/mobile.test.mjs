@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createFakeFaceEngine, createTickets, euclidean, FACE_MATCH_DISTANCE } from '../lib/face.mjs'
+import { stopServer } from './helpers.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const dataDir = mkdtempSync(join(tmpdir(), 'corecut-mobile-'))
@@ -69,8 +70,8 @@ before(async () => {
   await call('POST', '/auth/change-password', { token: admin, body: { currentPassword: 'arcoplan123', newPassword: 'Cerejeira-Azul-47' } })
 })
 
-after(() => {
-  child?.kill()
+after(async () => {
+  await stopServer(child)
   rmSync(dataDir, { recursive: true, force: true })
 })
 

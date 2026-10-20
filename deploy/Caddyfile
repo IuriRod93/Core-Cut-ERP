@@ -1,7 +1,9 @@
 # HTTPS automático (Let's Encrypt). O DNS do domínio precisa apontar para este servidor
 # e as portas 80/443 precisam estar abertas. DOMAIN vem do .env (ex.: cutcore.com.br).
 (seguranca) {
-	encode zstd gzip
+	# o canal ao vivo (/api/events) não pode ser comprimido: o aviso tem que sair na hora
+	@comprimir not path /api/events
+	encode @comprimir zstd gzip
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"

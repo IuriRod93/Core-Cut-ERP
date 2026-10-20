@@ -51,7 +51,7 @@ import { UserAvatar } from '../components/ui'
 import { useAlerts } from '../domain/alerts'
 import { useNotifications } from '../domain/notifications'
 import { useTimer } from '../domain/timer'
-import { useCollection } from '../lib/store'
+import { startLiveUpdates, useCollection } from '../lib/store'
 import { fmtClock, fmtRelative } from '../lib/format'
 import { ROLES } from '../../shared/access.mjs'
 
@@ -193,6 +193,9 @@ export function AppShell() {
   const [profileOpen, setProfileOpen] = useState(false)
   const alerts = useAlerts()
   const notifs = useNotifications()
+
+  // telas atualizam na hora quando outra pessoa (ou o chão de fábrica) grava algo
+  useEffect(() => startLiveUpdates(), [user?.id])
 
   useEffect(() => {
     try {

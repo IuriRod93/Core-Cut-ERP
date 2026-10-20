@@ -8,6 +8,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createGeo, distanceMeters } from '../lib/geo.mjs'
 import { projectPurchaseBalance } from '../../src/domain/planFlow.ts'
+import { stopServer } from './helpers.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const port = 5100 + Math.floor(Math.random() * 300)
@@ -84,8 +85,8 @@ before(async () => {
   assert.equal((await call('POST', '/auth/change-password', { token: master, body: { currentPassword: 'arcoplan123', newPassword: 'Cerejeira-Azul-47' } })).status, 200)
 })
 
-after(() => {
-  child?.kill()
+after(async () => {
+  await stopServer(child)
   maps?.close()
   rmSync(dataDir, { recursive: true, force: true })
 })

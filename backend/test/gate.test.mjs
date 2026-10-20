@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { computePrivateAssets } from '../../scripts/mark-private-assets.mjs'
+import { stopServer } from './helpers.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 /** Pede ao sistema operacional uma porta livre (evita colisão com os outros testes que rodam em paralelo). */
@@ -58,8 +59,8 @@ before(async () => {
   assert.ok(up, 'o servidor de teste não subiu')
 })
 
-after(() => {
-  child?.kill()
+after(async () => {
+  await stopServer(child)
   rmSync(dataDir, { recursive: true, force: true })
   rmSync(distDir, { recursive: true, force: true })
 })

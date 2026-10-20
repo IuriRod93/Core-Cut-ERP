@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, onUnauthorized, tokenStore } from '../lib/api'
+import { ApiError, api, onUnauthorized, tokenStore } from '../lib/api'
 import { resetStore } from '../lib/store'
+import { clearOfflineCache } from '../lib/offlineCache'
 import type { ModuleKey, Subscriber, User } from '../types'
 
 interface AuthValue {
@@ -30,6 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setModules([])
     setCompany(null)
     resetStore()
+    void clearOfflineCache()
   }, [])
 
   const refresh = useCallback(async () => {
@@ -41,8 +43,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!tokenStore.get()) return
+    // sem internet (e sem cópia guardada) a sessão continua: só uma recusa do servidor desconecta
     refresh()
-      .catch(() => clear())
+      .catch((error) => {
+        if (!(error instanceof ApiError && error.status === 0)) clear()
+      })
       .finally(() => setLoading(false))
   }, [refresh, clear])
 
@@ -61,6 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       login: async (login, password) => {
         const data = await api.post<{ token: string; user: User; modules: ModuleKey[]; company: Subscriber | null }>('/auth/login', { login, password })
+        await clearOfflineCache() // nada do usuário anterior deste aparelho
         tokenStore.set(data.token)
         resetStore()
         setUser(data.user)

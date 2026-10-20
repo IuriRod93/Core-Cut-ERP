@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stopServer } from './helpers.mjs'
 
 /**
  * Bateria de segurança contra o servidor em configuração de produção:
@@ -100,8 +101,8 @@ before(async () => {
   assert.equal(B.res.status, 201, JSON.stringify(B.res.json))
 })
 
-after(() => {
-  child?.kill()
+after(async () => {
+  await stopServer(child)
   rmSync(dataDir, { recursive: true, force: true })
 })
 

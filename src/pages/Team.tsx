@@ -110,6 +110,7 @@ function UsersView() {
       { key: 'unit', header: 'Empresa / unidade', hideBelow: 'md', render: (r, ) => (r.unitId ? '—' : '—') },
       { key: 'position', header: 'Cargo', hideBelow: 'md', render: (r) => r.position || '—' },
       { key: 'cost', header: 'Custo/hora', align: 'right', hideBelow: 'lg', sort: (r) => r.hourlyCost, render: (r) => (r.hourlyCost ? brl(r.hourlyCost) : '—') },
+      { key: 'pin', header: 'PIN fábrica', hideBelow: 'lg', render: (r) => (r.hasShopfloorPin ? 'Cadastrado' : '—') },
       { key: 'login', header: 'Último acesso', hideBelow: 'lg', sort: (r) => r.lastLoginAt, render: (r) => (r.lastLoginAt ? fmtRelative(r.lastLoginAt) : 'Nunca') },
       { key: 'active', header: 'Situação', render: (r) => <StatusChip options={[{ value: 'true', label: 'Ativo', color: '#2e7d4f' }, { value: 'false', label: 'Inativo', color: '#7d838c' }]} value={String(r.active !== false)} /> },
     ],
@@ -120,6 +121,8 @@ function UsersView() {
       { name: 'role', label: 'Função no sistema', type: 'select', options: roleOptions.filter((o) => isAdmin || o.value !== 'admin'), required: true, span: 6 },
       { name: 'password', label: 'Senha', type: 'password', span: 6, helper: 'Mínimo 8 caracteres. Em edição, preencha apenas para redefinir (o usuário deverá trocá-la).' },
       { name: 'position', label: 'Cargo', type: 'text', span: 6 },
+      { name: 'shopfloorPin', label: 'PIN do chão de fábrica', type: 'password', span: 6, helper: '4 a 6 números. Identifica o operador no tablet do setor; preencha só para cadastrar ou trocar.' },
+      { name: 'removeShopfloorPin', label: 'Remover o PIN do chão de fábrica', type: 'switch', span: 6 },
       { name: 'phone', label: 'Telefone', type: 'phone', span: 4 },
       { name: 'hourlyCost', label: 'Custo por hora (R$)', type: 'money', span: 4 },
       { name: 'admissionDate', label: 'Admissão', type: 'date', span: 4 },
@@ -129,6 +132,10 @@ function UsersView() {
     beforeSave: (v, mode) => {
       const out = { ...v }
       if (!out.password) delete out.password
+      if (!out.shopfloorPin) delete out.shopfloorPin
+      if (out.removeShopfloorPin) out.shopfloorPin = ''
+      delete out.removeShopfloorPin
+      delete out.hasShopfloorPin
       if (mode === 'create' && !out.password) throw new Error('Defina uma senha inicial para o novo usuário.')
       return out
     },

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { buildMessage, createMailer } from '../lib/mailer.mjs'
 import { createBillingEmails } from '../lib/billing-emails.mjs'
 import { emails } from '../lib/emails.mjs'
+import { stopServer } from './helpers.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const port = 4900 + Math.floor(Math.random() * 150)
@@ -139,8 +140,8 @@ before(async () => {
   }
 })
 
-after(() => {
-  child?.kill()
+after(async () => {
+  await stopServer(child)
   smtp?.close()
   rmSync(dataDir, { recursive: true, force: true })
 })

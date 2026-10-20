@@ -12,7 +12,25 @@ export default defineConfig({
       includeAssets: ['core-cut-logo.png'],
       // O service worker NÃO pré-carrega os .js: eles são entregues só a quem tem sessão e a lista de arquivos
       // do aplicativo não deve ficar publicada em sw.js.
-      workbox: { globPatterns: ['**/*.{html,css,ico,png,svg,woff2,webmanifest}'], globIgnores: ['site/**', 'downloads/**'] },
+      workbox: {
+        globPatterns: ['**/*.{html,css,ico,png,svg,woff2,webmanifest}'],
+        globIgnores: ['site/**', 'downloads/**'],
+        navigateFallbackDenylist: [/^\/api\//, /^\/site\//, /^\/downloads\//],
+        // Para o chão de fábrica abrir sem internet. Nada é pré-carregado: guarda só o que o usuário
+        // logado já baixou, e os dois caches são apagados no login e no logout (src/lib/offlineCache.ts).
+        runtimeCaching: [
+          {
+            urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith('/assets/') && url.pathname.endsWith('.js'),
+            handler: 'CacheFirst',
+            options: { cacheName: 'corecut-app-code', cacheableResponse: { statuses: [200] }, expiration: { maxEntries: 250, maxAgeSeconds: 30 * 24 * 3600 } },
+          },
+          {
+            urlPattern: ({ url, sameOrigin }) => sameOrigin && /^\/api\/(auth\/me|data\/(productionOrders|workCenters))$/.test(url.pathname),
+            handler: 'NetworkFirst',
+            options: { cacheName: 'corecut-offline-data', networkTimeoutSeconds: 10, cacheableResponse: { statuses: [200] }, expiration: { maxEntries: 10, maxAgeSeconds: 7 * 24 * 3600 } },
+          },
+        ],
+      },
       manifest: {
         name: 'Core Cut ERP',
         short_name: 'Core Cut',

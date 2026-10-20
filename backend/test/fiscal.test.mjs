@@ -100,8 +100,8 @@ before(async () => {
   await call('POST', '/auth/change-password', { token: admin, body: { currentPassword: 'arcoplan123', newPassword: 'Cerejeira-Azul-47' } })
 })
 
-after(() => {
-  child?.kill()
+after(async () => {
+  await stopServer(child)
   focus?.close()
   rmSync(dataDir, { recursive: true, force: true })
 })
@@ -356,6 +356,7 @@ test('rascunho: CFOP interestadual e parcelas do contrato ajustadas ao total', (
 
 // ---------------------------------------------- DANFE
 import { buildDanfePdf, code128C, CODE128_PATTERNS, formatAccessKey } from '../../src/domain/danfe.ts'
+import { stopServer } from './helpers.mjs'
 
 test('código de barras: tabela Code 128 consistente e 44 dígitos geram 277 módulos', () => {
   assert.equal(CODE128_PATTERNS.length, 107)

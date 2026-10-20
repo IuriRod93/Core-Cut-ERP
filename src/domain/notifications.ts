@@ -4,7 +4,7 @@ import { api } from '../lib/api'
 
 export interface AppNotification {
   id: string
-  kind: 'due' | 'overdue' | 'mention' | 'comment' | 'assigned' | 'automation'
+  kind: 'due' | 'overdue' | 'mention' | 'comment' | 'assigned' | 'automation' | 'quality' | 'shopfloor'
   title: string
   body: string
   path: string

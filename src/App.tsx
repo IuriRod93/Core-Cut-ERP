@@ -38,6 +38,7 @@ const Projects = lazyPage(() => import('./pages/Projects'), 'ProjectsPage')
 const ProjectWorkspace = lazyPage(() => import('./pages/ProjectWorkspace'), 'ProjectWorkspacePage')
 const Production = lazyPage(() => import('./pages/Production'), 'ProductionPage')
 const ShopFloor = lazyPage(() => import('./pages/ShopFloor'), 'ShopFloorPage')
+const ShopFloorBoard = lazyPage(() => import('./pages/ShopFloorBoard'), 'ShopFloorBoardPage')
 const CutPlan = lazyPage(() => import('./pages/CutPlan'), 'CutPlanPage')
 const Boms = lazyPage(() => import('./pages/Boms'), 'BomsPage')
 const Inventory = lazyPage(() => import('./pages/Inventory'), 'InventoryPage')
@@ -131,6 +132,7 @@ export default function App() {
           <Route path="/projetos/:projectId" element={guarded('projects', <ProjectWorkspace />)} />
           <Route path="/producao" element={guarded('production', <Production />)} />
           <Route path="/chao-de-fabrica" element={guarded('shopfloor', <ShopFloor />)} />
+          <Route path="/chao-de-fabrica/painel" element={guarded('shopfloor', <ShopFloorBoard />)} />
           <Route path="/plano-de-corte" element={guarded('cutplan', <CutPlan />)} />
           <Route path="/fichas-tecnicas" element={guarded('bom', <Boms />)} />
           <Route path="/qualidade" element={guarded('quality', <Quality />)} />

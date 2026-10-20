@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
-import { api } from './api'
+import { api, tokenStore } from './api'
 import type { CollectionMap, CollectionName, CompanySettings, Doc, StageDef, TaskStatusDef } from '../types'
 
 type Status = 'idle' | 'loading' | 'ready' | 'error'
@@ -90,6 +90,12 @@ export async function updateDoc<N extends CollectionName>(name: N, id: string, p
   }
 }
 
+/** Altera só a cópia local (ex.: apontamento guardado sem internet); a próxima leitura do servidor prevalece. */
+export function patchLocal<N extends CollectionName>(name: N, id: string, patch: Partial<CollectionMap[N]>) {
+  const prev = getState(name)
+  setState(name, { ...prev, items: prev.items.map((d) => (d.id === id ? ({ ...d, ...patch } as Doc) : d)) })
+}
+
 export async function removeDoc(name: CollectionName, id: string) {
   const prev = getState(name)
   setState(name, { ...prev, items: prev.items.filter((d) => d.id !== id) })
@@ -106,10 +112,112 @@ export async function removeDoc(name: CollectionName, id: string) {
 
 export const refreshCollection = (name: CollectionName) => loadCollection(name, { force: true, silent: true })
 
-// Atualização periódica silenciosa das coleções em uso (multiusuário).
+// Canal ao vivo: o servidor avisa quais coleções mudaram; só as que estão abertas na tela recarregam.
+const LIVE_STALE_MS = 70_000
+let liveSeenAt = 0
+let liveAbort: AbortController | null = null
+const liveAlive = () => Date.now() - liveSeenAt < LIVE_STALE_MS
+
+const pendingRefresh = new Set<string>()
+let refreshTimer = 0
+const refreshSoon = (names: Iterable<string>) => {
+  for (const name of names) if ((watchers.get(name) ?? 0) > 0 && getState(name).status === 'ready') pendingRefresh.add(name)
+  if (refreshTimer || !pendingRefresh.size) return
+  refreshTimer = window.setTimeout(() => {
+    refreshTimer = 0
+    pendingRefresh.forEach((name) => void loadCollection(name as CollectionName, { force: true, silent: true }))
+    pendingRefresh.clear()
+  }, 150)
+}
+
+/**
+ * Mantém o canal aberto enquanto houver sessão e a aba estiver visível (reconecta sozinho). Abas em
+ * segundo plano fecham o canal: em HTTP/1.1 o navegador só abre 6 conexões por servidor.
+ * Devolve a função que encerra.
+ */
+export function startLiveUpdates(): () => void {
+  let stopped = false
+  let retry = 2_000
+  let wake: (() => void) | null = null
+  const wait = (ms: number) =>
+    new Promise<void>((resolve) => {
+      const id = window.setTimeout(done, ms)
+      function done() {
+        window.clearTimeout(id)
+        wake = null
+        resolve()
+      }
+      wake = done
+    })
+  const onVisibility = () => {
+    if (document.visibilityState === 'visible') wake?.()
+    else liveAbort?.abort()
+  }
+  const onLeave = () => liveAbort?.abort()
+  document.addEventListener('visibilitychange', onVisibility)
+  window.addEventListener('pagehide', onLeave)
+  const run = async () => {
+    await wait(1_500) // deixa a tela carregar primeiro
+    while (!stopped) {
+      const token = tokenStore.get()
+      if (token && document.visibilityState === 'visible') {
+        liveAbort = new AbortController()
+        try {
+          const res = await fetch('/api/events', { headers: { Authorization: `Bearer ${token}` }, signal: liveAbort.signal })
+          if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
+          const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+          liveSeenAt = Date.now()
+          retry = 2_000
+          refreshSoon(watchers.keys()) // ao (re)conectar, recupera o que mudou enquanto estava fora
+          let buffer = ''
+          for (;;) {
+            const { value, done } = await reader.read()
+            if (done) break
+            liveSeenAt = Date.now()
+            buffer += value
+            let cut: number
+            while ((cut = buffer.indexOf('\n\n')) >= 0) {
+              const chunk = buffer.slice(0, cut)
+              buffer = buffer.slice(cut + 2)
+              for (const line of chunk.split('\n')) {
+                if (!line.startsWith('data: ')) continue
+                try {
+                  const msg = JSON.parse(line.slice(6)) as { changed?: string[] }
+                  if (Array.isArray(msg.changed)) refreshSoon(msg.changed)
+                } catch {
+                  /* aviso malformado: ignora */
+                }
+              }
+            }
+          }
+        } catch {
+          /* sem conexão: tenta de novo */
+        } finally {
+          liveSeenAt = 0
+          liveAbort = null
+        }
+      }
+      if (stopped) break
+      await wait(document.visibilityState === 'visible' ? retry : 60 * 60_000)
+      retry = Math.min(retry * 2, 60_000)
+    }
+  }
+  void run()
+  return () => {
+    stopped = true
+    document.removeEventListener('visibilitychange', onVisibility)
+    window.removeEventListener('pagehide', onLeave)
+    liveAbort?.abort()
+    wake?.()
+  }
+}
+
+// Atualização periódica silenciosa das coleções em uso: reserva para quando o canal ao vivo cai.
 if (typeof window !== 'undefined') {
   const tick = () => {
     if (document.visibilityState !== 'visible') return
+    if (liveAlive()) return
+    liveAbort?.abort() // canal mudo (rede trocou, proxy derrubou): força a reconexão
     watchers.forEach((count, name) => {
       if (count > 0 && getState(name).status === 'ready') void loadCollection(name, { force: true, silent: true })
     })

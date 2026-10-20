@@ -83,9 +83,9 @@ async function request<T>(method: string, path: string, body?: unknown, init?: {
 
 export const api = {
   get: <T,>(path: string) => request<T>('GET', path),
-  post: <T,>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
+  post: <T,>(path: string, body?: unknown, headers?: Record<string, string>) => request<T>('POST', path, body ?? {}, headers ? { headers } : undefined),
   put: <T,>(path: string, body: unknown) => request<T>('PUT', path, body),
-  del: <T,>(path: string) => request<T>('DELETE', path),
+  del: <T,>(path: string, headers?: Record<string, string>) => request<T>('DELETE', path, undefined, headers ? { headers } : undefined),
   upload: <T,>(path: string, file: File) =>
     request<T>('POST', path, undefined, { raw: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } }),
 }

@@ -40,7 +40,7 @@ if (!existsSync(join(root, 'dist', 'index.html'))) {
 // rotas que um usuário comum abre; /projetos/:id é montada depois de criar um projeto
 const ROUTES = [
   '/painel', '/tarefas', '/agenda', '/leads', '/clientes', '/orcamentos', '/contratos', '/projetos', '/producao',
-  '/chao-de-fabrica', '/plano-de-corte', '/fichas-tecnicas', '/qualidade', '/manutencao', '/entregas', '/garantias',
+  '/chao-de-fabrica', '/chao-de-fabrica/painel', '/plano-de-corte', '/fichas-tecnicas', '/qualidade', '/manutencao', '/entregas', '/garantias',
   '/estoque', '/estoque?aba=retalhos', '/compras', '/fornecedores', '/financeiro', '/comissoes', '/notas-fiscais', '/app', '/equipe', '/ponto', '/veiculos', '/relatorios', '/arquivos',
   '/logs', '/configuracoes', '/admin', '/admin/teste-pagamento', '/esqueci-senha',
 ]

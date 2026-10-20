@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { hashPassword } from '../lib/auth.mjs'
+import { stopServer } from './helpers.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const freePort = () =>
@@ -86,7 +87,7 @@ test('2FA removido: quem tinha o autenticador ligado entra só com a senha e os 
     assert.equal(user.totpPendingSecret, null)
     assert.deepEqual(user.recoveryCodes, [])
   } finally {
-    child.kill()
+    await stopServer(child)
     rmSync(dataDir, { recursive: true, force: true })
   }
 })
