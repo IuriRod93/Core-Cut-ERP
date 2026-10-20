@@ -76,7 +76,10 @@ test('separação: o que a entrada carrega é público; a tela interna e o que s
 
 test('portão: sem sessão o código das telas internas não é entregue; com sessão é', async () => {
   // público
-  assert.equal((await get('/')).status, 200)
+  const home = await get('/')
+  assert.equal(home.status, 200)
+  // câmera (QR das etiquetas) e localização só para o próprio site; microfone e pagamento bloqueados
+  assert.equal(home.headers.get('permissions-policy'), 'camera=(self), microphone=(), geolocation=(self), payment=()')
   assert.equal((await get('/assets/index-aaaaaaaa.js')).status, 200)
   assert.equal((await get('/assets/vendor-bbbbbbbb.js')).status, 200)
 

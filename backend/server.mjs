@@ -2638,7 +2638,8 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'same-origin',
   'Cross-Origin-Opener-Policy': 'same-origin',
   // geolocation=(self): o ponto e a rota de entrega pedem a localização (só com a permissão da pessoa)
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self), payment=()',
+  // camera=(self): o chão de fábrica lê o QR das etiquetas pela câmera (também só com a permissão da pessoa)
+  'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(self), payment=()',
   ...(/^https:\/\//i.test(process.env.APP_URL ?? '') ? { 'Strict-Transport-Security': 'max-age=31536000; includeSubDomains' } : {}),
   'Content-Security-Policy':
     "default-src 'self'; img-src 'self' data: blob: https://images.cws.digital https://tile.openstreetmap.org https://*.tile.openstreetmap.org; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
