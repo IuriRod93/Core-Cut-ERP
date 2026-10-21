@@ -70,7 +70,7 @@ function OrderLabels({ order, planIds, focusOpId, onMark }: { order: ProductionO
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase()
     const all = units ?? []
-    return q ? all.filter((u) => [u.piece.label, u.piece.module, u.piece.environment, u.planCode].some((v) => v?.toLowerCase().includes(q))) : all
+    return q ? all.filter((u) => [u.piece.label, u.piece.module, u.piece.environment, u.code].some((v) => v?.toLowerCase().includes(q))) : all
   }, [units, search])
 
   if (!planIds.length) return <EmptyState title="Sem plano de corte" description="Vincule um plano de corte à ordem para as etiquetas aparecerem aqui." />
@@ -110,7 +110,7 @@ function OrderLabels({ order, planIds, focusOpId, onMark }: { order: ProductionO
         })}
       </Box>
 
-      <TextField size="small" fullWidth label="Buscar peça, módulo ou plano" value={search} onChange={(e) => setSearch(e.target.value)} sx={{ mb: 1 }} />
+      <TextField size="small" fullWidth label="Buscar peça, módulo ou código da etiqueta" value={search} onChange={(e) => setSearch(e.target.value)} sx={{ mb: 1 }} />
       <Box sx={{ overflowX: 'auto' }}>
         <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', '& th, & td': { textAlign: 'left', p: 0.6, borderBottom: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap' } }}>
           <thead>
@@ -132,7 +132,7 @@ function OrderLabels({ order, planIds, focusOpId, onMark }: { order: ProductionO
                     {u.piece.label} · {u.n}/{u.piece.quantity}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {[u.piece.module || u.piece.environment, u.planCode].filter(Boolean).join(' · ')}
+                    {[u.code, u.piece.module || u.piece.environment].filter(Boolean).join(' · ')}
                   </Typography>
                 </td>
                 <td>

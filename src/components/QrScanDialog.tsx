@@ -86,7 +86,13 @@ export function QrScanDialog({ open, onClose, onResult }: { open: boolean; onClo
     }
   }, [open])
 
-  const submit = () => typed.trim() && onResult(typed.trim())
+  // limpa o campo: o leitor de código (ou a pessoa) já pode mandar a próxima etiqueta
+  const submit = () => {
+    const text = typed.trim()
+    if (!text) return
+    setTyped('')
+    onResult(text)
+  }
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>

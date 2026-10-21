@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { applyOperationAction, forgottenTimers, nextWallTime, runningOperationsOf } from '../lib/shopfloor.mjs'
-import { productivity, resolveScan, stopsByReason } from '../../src/domain/shopfloor.ts'
+import { labelCode, parseLabelCode, productivity, resolveScan, stopsByReason } from '../../src/domain/shopfloor.ts'
 import { stopServer } from './helpers.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -369,4 +369,17 @@ test('leitura: o QR da etiqueta traz plano, peça e unidade', () => {
   const found = resolveScan('https://x.com/plano-de-corte?plano=pl1&peca=lat&un=2', orders, [{ id: 'pl1', projectId: 'p1' }])
   assert.deepEqual(found.unit, { planId: 'pl1', pieceId: 'lat', n: 2 })
   assert.equal(resolveScan('OP-1', orders, []).unit, undefined)
+})
+
+test('código curto da etiqueta: impresso como PLANO-peça-unidade e aceito no campo de leitura', () => {
+  const plans = [{ id: 'pl1', projectId: 'p1', code: 'PLC-2026-0004' }]
+  const orders = [{ id: 'a', code: 'OP-2026-0001', status: 'em_producao', projectId: 'p1', cutPlanIds: ['pl1'], items: [], operations: [] }]
+  assert.equal(labelCode('PLC-2026-0004', 11, 2), 'PLC-2026-0004-12-2')
+  assert.deepEqual(parseLabelCode(' plc-2026-0004-12-2 ', plans), { planId: 'pl1', pieceIndex: 11, n: 2 })
+  assert.equal(parseLabelCode('PLC-2026-9999-1-1', plans), null)
+  const found = resolveScan('PLC-2026-0004-12-2', orders, plans)
+  assert.deepEqual([found.kind, found.orderIds, found.unitRef], ['orders', ['a'], { planId: 'pl1', pieceIndex: 11, n: 2 }])
+  // o código do plano sozinho continua achando a ordem (sem marcar peça)
+  const plan = resolveScan('PLC-2026-0004', orders, plans)
+  assert.deepEqual([plan.orderIds, plan.unitRef, plan.unit], [['a'], undefined, undefined])
 })

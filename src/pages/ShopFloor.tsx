@@ -6,7 +6,7 @@ import { ArticleIcon, BadgeIcon, CheckCircleIcon, PauseIcon, PlayArrowIcon, Prec
 import { QrScanDialog } from '../components/QrScanDialog'
 import { StepDetailsDialog } from '../components/StepDetailsDialog'
 import { LabelsDialog } from '../components/LabelsDialog'
-import { unitKey } from '../lib/planUnits'
+import { loadPlan, unitKey } from '../lib/planUnits'
 import { resolveScan } from '../domain/shopfloor'
 import { PAUSE_REASONS, type PauseReason } from '../../shared/shopfloor.mjs'
 import { Dot, EmptyState, LoadingState, PageHeader, ProgressLine } from '../components/ui'
@@ -310,7 +310,16 @@ export function ShopFloorPage() {
     if (found.kind === 'none') return toast.error(found.message)
     setScanned({ orderIds: found.orderIds, label: found.label })
     // código de ordem/plano fecha o leitor; etiqueta de peça mantém aberto para ler a próxima
-    if (!found.unit) return setScanOpen(false)
+    if (!found.unit && !found.unitRef) return setScanOpen(false)
+    let unit = found.unit
+    if (!unit && found.unitRef) {
+      // código curto digitado: localiza a peça pelo número dela no plano
+      const ref = found.unitRef
+      const piece = (await loadPlan(ref.planId).catch(() => null))?.pieces?.[ref.pieceIndex]
+      if (!piece || ref.n > piece.quantity) return toast.error('Etiqueta não encontrada no plano de corte.')
+      unit = { planId: ref.planId, pieceId: piece.id, n: ref.n }
+    }
+    if (!unit) return
     // etiqueta de peça: marca como feita na etapa em andamento (de preferência a deste setor / deste operador)
     const who = operator?.id ?? user?.id
     const running = data.productionOrders
@@ -318,10 +327,10 @@ export function ShopFloorPage() {
       .flatMap((order) => order.operations.filter((op) => op.status === 'em_andamento').map((op) => ({ order, op })))
     const target = running.find((r) => r.op.workCenterId === selected) ?? running.find((r) => r.op.operatorId === who) ?? (running.length === 1 ? running[0] : undefined)
     if (!target) return toast.info('Etiqueta lida. Inicie a etapa deste setor para marcar a peça como feita.')
-    const key = unitKey(found.unit.planId, found.unit.pieceId, found.unit.n)
+    const key = unitKey(unit.planId, unit.pieceId, unit.n)
     if (target.op.piecesDone?.includes(key)) return toast.info(`Esta peça já estava marcada em ${target.op.name}.`)
     const res = await markUnits(target.order, target.op, [key], true)
-    if (res) toast.success(`Peça ${found.unit.n} marcada em ${target.op.name} · ${res.done}/${res.total}`)
+    if (res) toast.success(`Peça ${unit.n} marcada em ${target.op.name} · ${res.done}/${res.total}`)
   }
 
   const openOperatorDialog = async () => {

@@ -4,6 +4,7 @@ import { BRAND_COLOR } from '../brand/logoData.ts'
 import { brl, fmtDate } from '../lib/format.ts'
 import { edgeMetersOf, edgeSegments, methodLabel, pieceToSheet } from './machining.ts'
 import { analyzeSheet, usableLeftovers } from './cutSequence.ts'
+import { labelCode } from './shopfloor.ts'
 import type { CutPiece, CutPlanCosts, CutPlanGroup } from '../types'
 
 const rgb = (hex: string): [number, number, number] => {
@@ -915,8 +916,10 @@ export async function buildLabelsPdf(d: LabelsPdfData): Promise<Blob> {
         slots.set(pl.pieceId, list)
       }
 
-  const units: { piece: CutPiece; n: number }[] = []
-  for (const p of d.pieces) for (let i = 1; i <= p.quantity; i++) units.push({ piece: p, n: i })
+  const units: { piece: CutPiece; n: number; index: number }[] = []
+  d.pieces.forEach((p, index) => {
+    for (let i = 1; i <= p.quantity; i++) units.push({ piece: p, n: i, index })
+  })
 
   for (let idx = 0; idx < units.length; idx++) {
     const u = units[idx]
@@ -966,6 +969,12 @@ export async function buildLabelsPdf(d: LabelsPdfData): Promise<Blob> {
       pdf.setFontSize(7.5)
       pdf.setTextColor(...brand)
       pdf.text(`${u.n}/${u.piece.quantity}`, x + lw - 4, y + 33.5, { align: 'right' })
+      // código para digitar no chão de fábrica quando não há câmera
+      if (d.code) {
+        pdf.setFontSize(5.2)
+        pdf.setTextColor(60)
+        pdf.text(labelCode(d.code, u.index, u.n), x + lw - 10, y + 20, { align: 'center' })
+      }
       continue
     }
 
@@ -1000,12 +1009,17 @@ export async function buildLabelsPdf(d: LabelsPdfData): Promise<Blob> {
     pdf.setTextColor(80)
     pdf.text(at?.group.thickness ? `esp. ${at.group.thickness} mm` : '', x + 6 + 38, y + 31)
 
-    drawQr(pdf, qrText, x + lw - 27, y + 3.5, 23)
+    drawQr(pdf, qrText, x + lw - 26.5, y + 3.5, 22)
     pdf.setFont('helvetica', 'bold')
     pdf.setFontSize(9)
     pdf.setTextColor(...brand)
-    pdf.text(`${u.n}/${u.piece.quantity}`, x + lw - 15.5, y + 31, { align: 'center' })
+    pdf.text(`${u.n}/${u.piece.quantity}`, x + lw - 15.5, y + 32, { align: 'center' })
     pdf.setFont('helvetica', 'normal')
+    if (d.code) {
+      pdf.setFontSize(6)
+      pdf.setTextColor(60)
+      pdf.text(labelCode(d.code, u.index, u.n), x + lw - 15.5, y + 28.2, { align: 'center' })
+    }
 
     // desenhos
     const dy = y + 35

@@ -3,7 +3,9 @@ import { PAUSE_REASONS, type PauseReason } from '../../shared/shopfloor.mjs'
 
 const ACTIVE = ['liberada', 'em_producao']
 
-export type ScanResult = { kind: 'orders'; orderIds: string[]; label: string; unit?: { planId: string; pieceId: string; n: number } } | { kind: 'none'; message: string }
+export type ScanResult =
+  | { kind: 'orders'; orderIds: string[]; label: string; unit?: { planId: string; pieceId: string; n: number }; unitRef?: { planId: string; pieceIndex: number; n: number } }
+  | { kind: 'none'; message: string }
 
 /**
  * Interpreta o que foi lido no Chão de fábrica: o QR da etiqueta (link do plano de corte com a peça),
@@ -31,6 +33,12 @@ export function resolveScan(text: string, orders: ProductionOrder[], plans: { id
     const byCode = active.filter((o) => (o.code ?? '').toUpperCase() === code)
     if (byCode.length) return { kind: 'orders', orderIds: byCode.map((o) => o.id), label: byCode[0].code ?? code }
     planId = plans.find((p) => (p.code ?? '').toUpperCase() === code)?.id ?? null
+    // código curto impresso na etiqueta: a peça é localizada depois, no plano completo
+    const ref = planId ? null : parseLabelCode(raw, plans)
+    if (ref) {
+      const result = resolveScan(`https://x/?plano=${encodeURIComponent(ref.planId)}`, orders, plans)
+      return result.kind === 'orders' ? { ...result, label: `Etiqueta ${raw.toUpperCase()}`, unitRef: ref } : result
+    }
     if (!planId) return { kind: 'none', message: `Nenhuma ordem liberada ou em produção com o código "${raw}".` }
   }
 
@@ -130,4 +138,17 @@ export function stopsByReason(orders: ProductionOrder[], sectorName: (id: string
       return { reason, label: meta?.label ?? reason, planned: meta?.planned ?? false, count: v.count, seconds: Math.round(v.seconds), topSector: [...v.sectors.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '' }
     })
     .sort((a, b) => Number(a.planned) - Number(b.planned) || b.seconds - a.seconds)
+}
+
+/** Código curto impresso na etiqueta (para digitar sem câmera): plano, nº da peça no plano e unidade. */
+export const labelCode = (planCode: string, pieceIndex: number, n: number) => `${planCode}-${pieceIndex + 1}-${n}`
+
+/** Lê um código curto de etiqueta ("PLC-2026-0004-12-2") contra os planos conhecidos. */
+export function parseLabelCode(text: string, plans: { id: string; code?: string }[]): { planId: string; pieceIndex: number; n: number } | null {
+  const m = text.trim().toUpperCase().match(/^(.+)-(\d+)-(\d+)$/)
+  if (!m) return null
+  const plan = plans.find((p) => (p.code ?? '').toUpperCase() === m[1])
+  const pieceIndex = Number(m[2]) - 1
+  const n = Number(m[3])
+  return plan && pieceIndex >= 0 && n > 0 ? { planId: plan.id, pieceIndex, n } : null
 }
