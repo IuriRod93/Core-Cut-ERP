@@ -272,6 +272,20 @@ const activeReservationsFor = (materialId, exceptOrderId = null) =>
     .filter((reservation) => reservation.materialId === materialId && reservation.status === 'reserved' && reservation.productionOrderId !== exceptOrderId)
     .reduce((sum, reservation) => sum + Number(reservation.quantity ?? 0), 0)
 
+/** Equipe (responsável + membros) do projeto, ou de todos os projetos que têm ordem de produção ativa. */
+function shopfloorTeam(projectId) {
+  const active = (o) => o.status !== 'cancelada' && o.status !== 'concluida'
+  const ids = projectId ? [projectId] : [...new Set(db.col('productionOrders').filter((o) => o.projectId && active(o)).map((o) => o.projectId))]
+  const team = new Set()
+  for (const id of ids) {
+    const project = db.get('projects', id)
+    if (!project) continue
+    if (project.managerId) team.add(project.managerId)
+    for (const m of project.memberIds ?? []) team.add(m)
+  }
+  return team
+}
+
 /** Quem está apontando: o operador do PIN (cabeçalho X-Operator) ou o próprio usuário logado. */
 function shopfloorOperator(req, user) {
   const header = req.headers['x-operator']
@@ -1356,6 +1370,12 @@ async function handleAuthenticated(req, res, path, query, user, token) {
           operations.push({ id: randomUUID(), workCenterId: route.workCenterId, name: center?.name ?? 'Operação', order: operations.length + 1, plannedMinutes: Number(route.minutes) * item.quantity, actualSeconds: 0, status: 'pendente', runningSince: null, operatorId: null, operatorName: null, quantityDone: 0, startedAt: null, finishedAt: null })
         }
       }
+      // sem roteiro nas fichas técnicas: uma etapa por setor ativo (a ordem nunca nasce sem etapas)
+      if (!operations.length)
+        db.col('workCenters')
+          .filter((center) => center.active !== false)
+          .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0))
+          .forEach((center) => operations.push({ id: randomUUID(), workCenterId: center.id, name: center.name, order: operations.length + 1, plannedMinutes: 0, actualSeconds: 0, status: 'pendente', runningSince: null, operatorId: null, operatorName: null, quantityDone: 0, startedAt: null, finishedAt: null }))
       productionOrder = db.insert('productionOrders', { code: db.nextCode('OP'), title: `Produção — ${budget.title}`, budgetId: budget.id, projectId: project.id, clientId: budget.clientId, status: 'planejada', priority: 'media', startDate: dateOnly(), dueDate: dateOnly(dueOffset), items, operations, materialsPosted: false, cutPlanIds: [], notes: `Gerada pela aprovação do orçamento ${budget.code ?? budget.id}.` })
     }
 
@@ -1485,11 +1505,13 @@ async function handleAuthenticated(req, res, path, query, user, token) {
   // ---- chão de fábrica: troca de operador por PIN ----------------------
   if (url === '/api/shopfloor/operators' && method === 'GET') {
     requireModule(user, 'shopfloor')
+    // equipe do projeto escolhido (ou de todos os projetos com ordem de produção): escolhe com um toque
+    const team = shopfloorTeam(query.projeto ? String(query.projeto) : null)
     const operators = db
       .col('users')
-      .filter((u) => u.active !== false && userModules(u).includes('shopfloor'))
-      .map((u) => ({ id: u.id, name: u.name, position: u.position ?? '', photoFileId: u.photoFileId ?? null, hasPin: Boolean(u.shopfloorPinHash) }))
-      .sort((a, b) => a.name.localeCompare(b.name))
+      .filter((u) => u.active !== false && (team.has(u.id) || (userModules(u).includes('shopfloor') && u.shopfloorPinHash)))
+      .map((u) => ({ id: u.id, name: u.name, position: u.position ?? '', photoFileId: u.photoFileId ?? null, hasPin: Boolean(u.shopfloorPinHash), team: team.has(u.id) }))
+      .sort((a, b) => Number(b.team) - Number(a.team) || a.name.localeCompare(b.name))
     return send(res, 200, operators)
   }
 
@@ -1497,14 +1519,20 @@ async function handleAuthenticated(req, res, path, query, user, token) {
     requireModule(user, 'shopfloor')
     const body = await readJson(req)
     const userId = String(body.userId ?? '')
-    rateLimit(`shopfloor-pin:${user.id}`, 20, 10 * 60_000)
-    rateLimit(`shopfloor-pin-user:${userId}`, 6, 10 * 60_000)
+    rateLimit(`shopfloor-pin:${user.id}`, 40, 10 * 60_000)
     const operator = db.get('users', userId)
-    const valid = operator && operator.active !== false && userModules(operator).includes('shopfloor')
-    const ok = verifyPassword(String(body.pin ?? ''), valid && operator.shopfloorPinHash ? operator.shopfloorPinHash : DUMMY_HASH) && valid && operator.shopfloorPinHash
-    if (!ok) throw new HttpError(401, valid && !operator.shopfloorPinHash ? 'Este operador ainda não tem PIN. Peça para cadastrar em Equipe.' : 'PIN incorreto.')
+    if (!operator || operator.active === false) throw new HttpError(404, 'Pessoa não encontrada ou inativa.')
+    const pin = String(body.pin ?? '')
+    if (pin) {
+      // fora da equipe: confirma com o PIN cadastrado em Equipe
+      rateLimit(`shopfloor-pin-user:${userId}`, 6, 10 * 60_000)
+      const ok = operator.shopfloorPinHash && verifyPassword(pin, operator.shopfloorPinHash)
+      if (!ok) throw new HttpError(401, operator.shopfloorPinHash ? 'PIN incorreto.' : 'Esta pessoa ainda não tem PIN. Peça para cadastrar em Equipe.')
+    } else if (!shopfloorTeam(body.projectId ? String(body.projectId) : null).has(operator.id)) {
+      throw new HttpError(403, 'Esta pessoa não faz parte da equipe de um projeto em produção. Inclua na equipe do projeto ou use o PIN.')
+    }
     const ticket = operatorTickets.create(operator.id, { sessionUserId: user.id })
-    audit(user, 'shopfloor_operator', 'users', operator)
+    audit(user, 'shopfloor_operator', 'users', operator, { by: pin ? 'pin' : 'equipe' })
     return send(res, 200, { ticket, operator: { id: operator.id, name: operator.name } })
   }
 

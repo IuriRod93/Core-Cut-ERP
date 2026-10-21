@@ -10,7 +10,7 @@ import { loadPlan, unitKey, unitsOf } from '../lib/planUnits'
 import { buildProductionReportPdf } from '../domain/productionReportPdf'
 import { resolveScan } from '../domain/shopfloor'
 import { PAUSE_REASONS, type PauseReason } from '../../shared/shopfloor.mjs'
-import { Dot, EmptyState, LoadingState, PageHeader, ProgressLine } from '../components/ui'
+import { Dot, EmptyState, LoadingState, PageHeader, ProgressLine, UserAvatar } from '../components/ui'
 import { orderProgress } from '../components/ProductionTimeline'
 import { NumberField } from '../components/forms'
 import { useToast } from '../components/feedback'
@@ -30,7 +30,7 @@ const OPERATOR_IDLE_MS = 15 * 60_000
 
 type Operator = { ticket: string; id: string; name: string }
 type ActionBody = { quantity?: number | null; reason?: PauseReason; note?: string }
-type OperatorOption = { id: string; name: string; position: string; hasPin: boolean }
+type OperatorOption = { id: string; name: string; position: string; hasPin: boolean; team: boolean; photoFileId?: string | null }
 
 const loadOperator = (): Operator | null => {
   try {
@@ -318,6 +318,22 @@ export function ShopFloorPage() {
     }
   }
 
+  /** Ordem sem roteiro: uma etapa por setor ativo. */
+  const addSteps = async (order: ProductionOrder) => {
+    if (!centers.length) return toast.error('Cadastre os setores em Configurações → Setores e máquinas.')
+    setProjectBusy(true)
+    try {
+      const operations = centers.map((center, index) => ({ id: crypto.randomUUID(), workCenterId: center.id, name: center.name, order: index + 1, plannedMinutes: 0, actualSeconds: 0, status: 'pendente' as const, quantityDone: 0 }))
+      await api.put(`/data/productionOrders/${order.id}`, { operations, ...(!order.cutPlanIds?.length && projectPlanIds.length ? { cutPlanIds: projectPlanIds } : {}) })
+      await refreshCollection('productionOrders')
+      toast.success(order.status === 'planejada' ? 'Etapas criadas. Agora libere a ordem para a produção.' : 'Etapas criadas: já aparecem nos setores.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível criar as etapas.')
+    } finally {
+      setProjectBusy(false)
+    }
+  }
+
   const createOrder = async () => {
     const project = data.projects.find((p) => p.id === projectFilter)
     if (!project) return
@@ -420,17 +436,19 @@ export function ShopFloorPage() {
 
   const openOperatorDialog = async () => {
     setPin('')
-    setOperatorPick(operator?.id ?? '')
+    setOperatorPick('')
+    setOperatorOptions([])
     setOperatorDialog(true)
     try {
-      setOperatorOptions(await api.get<OperatorOption[]>('/shopfloor/operators'))
+      setOperatorOptions(await api.get<OperatorOption[]>(`/shopfloor/operators${projectFilter ? `?projeto=${encodeURIComponent(projectFilter)}` : ''}`))
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Não foi possível carregar os operadores.')
+      toast.error(error instanceof Error ? error.message : 'Não foi possível carregar a equipe.')
     }
   }
-  const confirmOperator = async () => {
+  /** Pessoa da equipe do projeto: um toque basta. Fora da equipe: confirma com o PIN. */
+  const confirmOperator = async (teamId?: string) => {
     try {
-      const res = await api.post<{ ticket: string; operator: { id: string; name: string } }>('/shopfloor/operator', { userId: operatorPick, pin })
+      const res = await api.post<{ ticket: string; operator: { id: string; name: string } }>('/shopfloor/operator', teamId ? { userId: teamId, projectId: projectFilter || undefined } : { userId: operatorPick, pin })
       setOperator({ ticket: res.ticket, ...res.operator })
       setOperatorDialog(false)
       toast.success(`Operador: ${res.operator.name}`)
@@ -467,6 +485,32 @@ export function ShopFloorPage() {
           </Stack>
         }
       />
+
+      {/* como usar, em três toques (some quando já há projeto e operador escolhidos) */}
+      {!projectFilter || !operator ? (
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' }, gap: 1.5, mb: 2 }}>
+          {[
+            { n: 1, title: 'Escolha o projeto', text: 'Na lista aparecem os projetos com plano de corte. Se a ordem estiver planejada, toque em Liberar.', done: Boolean(projectFilter) },
+            { n: 2, title: 'Toque no seu nome', text: 'Em “Operador”, escolha quem está trabalhando: a equipe do projeto aparece com um toque.', done: Boolean(operator) },
+            { n: 3, title: 'Inicie e conclua', text: 'Na etapa do seu setor: Iniciar, marque as peças (ou leia as etiquetas) e Concluir. No fim, gere o Relatório técnico.', done: false },
+          ].map((step) => (
+            <Paper key={step.n} variant="outlined" sx={{ p: 1.5, borderRadius: 3, display: 'flex', gap: 1.5, alignItems: 'flex-start', borderColor: step.done ? colors.success : colors.border, bgcolor: step.done ? alpha(colors.success, 0.05) : '#fff' }}>
+              <Box sx={{ width: 30, height: 30, borderRadius: '50%', flexShrink: 0, display: 'grid', placeItems: 'center', fontWeight: 700, color: '#fff', bgcolor: step.done ? colors.success : colors.brand }}>{step.done ? '✓' : step.n}</Box>
+              <Box>
+                <Typography variant="subtitle2">{step.title}</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {step.text}
+                </Typography>
+                {step.n === 2 && !operator ? (
+                  <Button size="small" onClick={openOperatorDialog} sx={{ mt: 0.5, ml: -0.75 }}>
+                    Escolher quem está trabalhando
+                  </Button>
+                ) : null}
+              </Box>
+            </Paper>
+          ))}
+        </Box>
+      ) : null}
 
       {pendingQueue.length ? (
         <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 3, mb: 2, borderColor: colors.warning, bgcolor: alpha(colors.warning, 0.08) }}>
@@ -572,7 +616,23 @@ export function ShopFloorPage() {
                   {o.code} · {o.title} · {optLabel(OP_STATUS, o.status)}
                 </Typography>
                 <ProgressLine value={orderProgress(o)} label={`${o.operations.filter((x) => x.status === 'concluida').length}/${o.operations.length} etapas`} />
-                {o.status === 'planejada' ? (
+                {!o.operations.length ? (
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.75, flexWrap: 'wrap', rowGap: 0.5 }}>
+                    <Typography variant="body2" sx={{ color: colors.warning, fontWeight: 600 }}>
+                      Esta ordem não tem etapas.
+                    </Typography>
+                    {['planejada', 'liberada', 'em_producao'].includes(o.status) ? (
+                      <Button size="small" variant="contained" disabled={projectBusy} onClick={() => void addSteps(o)}>
+                        Criar etapas pelos setores
+                      </Button>
+                    ) : (
+                      <Button size="small" variant="contained" disabled={projectBusy} onClick={() => void createOrder()}>
+                        Nova ordem de produção
+                      </Button>
+                    )}
+                  </Stack>
+                ) : null}
+                {o.status === 'planejada' && o.operations.length ? (
                   <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.75, flexWrap: 'wrap', rowGap: 0.5 }}>
                     <Typography variant="body2" sx={{ color: colors.warning, fontWeight: 600 }}>
                       Ordem planejada: libere para as etapas aparecerem nos setores.
@@ -591,7 +651,18 @@ export function ShopFloorPage() {
               </Box>
             ))}
           </Box>
-        ) : projectFilter ? (
+        ) : null}
+        {projectFilter && projectOrders.length && projectOrders.every((o) => o.status === 'concluida') && projectOrders.some((o) => o.operations.length) ? (
+          <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              A produção deste projeto foi concluída. Precisa produzir de novo (reposição, segundo lote)?
+            </Typography>
+            <Button size="small" variant="outlined" disabled={projectBusy} onClick={() => void createOrder()}>
+              Nova ordem de produção
+            </Button>
+          </Stack>
+        ) : null}
+        {projectFilter && !projectOrders.length ? (
           <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
             <Typography variant="body2" sx={{ color: colors.warning, fontWeight: 600 }}>
               Este projeto tem {projectPlanIds.length} plano(s) de corte, mas ainda não tem ordem de produção.
@@ -838,37 +909,82 @@ export function ShopFloorPage() {
 
       <QrScanDialog open={scanOpen} onClose={() => setScanOpen(false)} onResult={onScan} />
 
-      <Dialog open={operatorDialog} onClose={() => setOperatorDialog(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Quem está apontando?</DialogTitle>
+      <Dialog open={operatorDialog} onClose={() => setOperatorDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          Quem está trabalhando?
+          <Typography variant="body2" color="text.secondary">
+            {projectFilter ? `Equipe do projeto ${data.projects.find((p) => p.id === projectFilter)?.name ?? ''}` : 'Equipe dos projetos em produção'} · toque no seu nome
+          </Typography>
+        </DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ pt: 1 }}>
-            <TextField select label="Operador" value={operatorPick} onChange={(e) => setOperatorPick(e.target.value)} fullWidth>
-              {operatorOptions.map((o) => (
-                <MenuItem key={o.id} value={o.id} disabled={!o.hasPin}>
-                  {o.name}
-                  {o.position ? ` · ${o.position}` : ''}
-                  {o.hasPin ? '' : ' (sem PIN)'}
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField
-              label="PIN"
-              type="password"
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              onKeyDown={(e) => e.key === 'Enter' && operatorPick && pin.length >= 4 && confirmOperator()}
-              slotProps={{ htmlInput: { inputMode: 'numeric', autoComplete: 'off' } }}
-              helperText="O PIN é cadastrado em Equipe. Vale até o fim do turno neste aparelho."
-              fullWidth
-            />
-          </Stack>
+          {operatorOptions.some((o) => o.team) ? (
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(3, 1fr)' }, gap: 1.25, mb: 2 }}>
+              {operatorOptions
+                .filter((o) => o.team)
+                .map((o) => (
+                  <Button
+                    key={o.id}
+                    variant={operator?.id === o.id ? 'contained' : 'outlined'}
+                    color="inherit"
+                    onClick={() => void confirmOperator(o.id)}
+                    sx={{ py: 1.5, flexDirection: 'column', gap: 0.75, textTransform: 'none', borderColor: colors.border }}
+                  >
+                    <UserAvatar user={{ id: o.id, name: o.name, photoFileId: o.photoFileId ?? null }} size={44} />
+                    <Typography variant="subtitle2" sx={{ lineHeight: 1.2 }}>
+                      {o.name}
+                    </Typography>
+                    {o.position ? (
+                      <Typography variant="caption" color="text.secondary">
+                        {o.position}
+                      </Typography>
+                    ) : null}
+                  </Button>
+                ))}
+            </Box>
+          ) : (
+            <Typography color="text.secondary" sx={{ mb: 2 }}>
+              {operatorOptions.length || !operatorDialog
+                ? 'Ninguém na equipe deste projeto ainda. Inclua as pessoas em Projetos → editar projeto → Equipe do projeto.'
+                : 'Carregando a equipe…'}
+            </Typography>
+          )}
+
+          {operatorOptions.some((o) => !o.team && o.hasPin) ? (
+            <Box sx={{ pt: 1.5, borderTop: `1px solid ${colors.border}` }}>
+              <Typography variant="overline" color="text.secondary">
+                Outra pessoa (com PIN)
+              </Typography>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 0.5 }}>
+                <TextField select size="small" label="Pessoa" value={operatorPick} onChange={(e) => setOperatorPick(e.target.value)} sx={{ flex: 1 }}>
+                  {operatorOptions
+                    .filter((o) => !o.team && o.hasPin)
+                    .map((o) => (
+                      <MenuItem key={o.id} value={o.id}>
+                        {o.name}
+                        {o.position ? ` · ${o.position}` : ''}
+                      </MenuItem>
+                    ))}
+                </TextField>
+                <TextField
+                  size="small"
+                  label="PIN"
+                  type="password"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  onKeyDown={(e) => e.key === 'Enter' && operatorPick && pin.length >= 4 && confirmOperator()}
+                  slotProps={{ htmlInput: { inputMode: 'numeric', autoComplete: 'off' } }}
+                  sx={{ width: { sm: 120 } }}
+                />
+                <Button variant="contained" onClick={() => void confirmOperator()} disabled={!operatorPick || pin.length < 4}>
+                  Entrar
+                </Button>
+              </Stack>
+            </Box>
+          ) : null}
         </DialogContent>
         <DialogActions>
           <Button color="inherit" onClick={() => setOperatorDialog(false)}>
-            Cancelar
-          </Button>
-          <Button variant="contained" onClick={confirmOperator} disabled={!operatorPick || pin.length < 4}>
-            Entrar
+            Fechar
           </Button>
         </DialogActions>
       </Dialog>

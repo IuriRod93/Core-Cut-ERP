@@ -10,7 +10,7 @@ import { labelCode, parseLabelCode, productivity, resolveScan, stopsByReason } f
 import { stopServer } from './helpers.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const port = 5900 + Math.floor(Math.random() * 300)
+const port = 7100 + Math.floor(Math.random() * 300) // faixa só deste arquivo (outros testes usam 4300–7000)
 const base = `http://127.0.0.1:${port}/api`
 const dataDir = mkdtempSync(join(tmpdir(), 'corecut-shopfloor-'))
 let child
@@ -382,4 +382,21 @@ test('código curto da etiqueta: impresso como PLANO-peça-unidade e aceito no c
   // o código do plano sozinho continua achando a ordem (sem marcar peça)
   const plan = resolveScan('PLC-2026-0004', orders, plans)
   assert.deepEqual([plan.orderIds, plan.unitRef, plan.unit], [['a'], undefined, undefined])
+})
+
+test('operador da equipe do projeto entra com um toque; fora da equipe precisa do PIN', async () => {
+  const member = (await call('POST', '/data/users', { body: { name: 'Carlos Montador', email: 'carlos@fabrica.test', role: 'projetista', password: 'Fabrica-Forte-9' } })).json
+  const outsider = (await call('POST', '/data/users', { body: { name: 'Rita Fora', email: 'rita@fabrica.test', role: 'producao', password: 'Fabrica-Forte-9' } })).json
+  const project = (await call('POST', '/data/projects', { body: { name: 'Projeto equipe', status: 'producao', memberIds: [member.id] } })).json
+  const { id, code, ...draft } = makeOrder({ status: 'planejada', projectId: project.id })
+  await call('POST', '/data/productionOrders', { body: { title: 'Equipe', priority: 'media', ...draft } })
+
+  const team = (await call('GET', `/shopfloor/operators?projeto=${project.id}`)).json
+  assert.ok(team.some((o) => o.id === member.id && o.team))
+  assert.ok(!team.some((o) => o.id === outsider.id && o.team))
+
+  const ok = await call('POST', '/shopfloor/operator', { body: { userId: member.id, projectId: project.id } })
+  assert.equal(ok.status, 200, JSON.stringify(ok.json))
+  assert.equal(ok.json.operator.name, 'Carlos Montador')
+  assert.equal((await call('POST', '/shopfloor/operator', { body: { userId: outsider.id } })).status, 403)
 })
