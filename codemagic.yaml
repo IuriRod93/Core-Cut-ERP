@@ -42,3 +42,46 @@ workflows:
           ls -la build
     artifacts:
       - build/*.ipa
+
+  # iPhone virtual (simulador) para testar sem iPhone, por exemplo no Appetize.io (roda no navegador).
+  # Não precisa de assinatura, mas NÃO instala em iPhone de verdade.
+  ios-simulator:
+    name: iOS simulador (Appetize)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    working_directory: CoreCut-App
+    environment:
+      node: 22
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Dependências
+        script: npm ci
+      - name: Projeto iOS (Expo prebuild)
+        script: CI=1 npx expo prebuild --platform ios --clean
+      - name: Compilar para o simulador (Release)
+        # Release embute o código do app (main.jsbundle): abre sem servidor de desenvolvimento.
+        # Duas arquiteturas (Intel e Apple Silicon) para rodar em qualquer simulador.
+        script: |
+          set -o pipefail
+          xcodebuild \
+            -workspace ios/CoreCutERP.xcworkspace \
+            -scheme CoreCutERP \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$CM_BUILD_DIR/sim" \
+            ONLY_ACTIVE_ARCH=NO ARCHS="arm64 x86_64" \
+            CODE_SIGNING_ALLOWED=NO \
+            build \
+            | tail -n 80
+      - name: Gerar o .zip para o Appetize
+        script: |
+          VERSION="$(node -p "require('./app.json').expo.version")"
+          APP="$CM_BUILD_DIR/sim/Build/Products/Release-iphonesimulator/CoreCutERP.app"
+          mkdir -p build
+          lipo -info "$APP/CoreCutERP" || true
+          (cd "$(dirname "$APP")" && zip -qry "$CM_BUILD_DIR/CoreCut-App/build/CoreCut-ERP-$VERSION-simulador.zip" CoreCutERP.app)
+          ls -la build
+    artifacts:
+      - build/*.zip
