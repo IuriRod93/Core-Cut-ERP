@@ -1,0 +1,82 @@
+{
+  "expo": {
+    "name": "Core Cut ERP",
+    "slug": "corecut-erp",
+    "scheme": "corecut",
+    "version": "1.0.5",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#ffffff",
+    "ios": {
+      "bundleIdentifier": "br.com.cutcore.erp",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "O Core Cut usa a câmera para confirmar seu rosto, ler as etiquetas das peças no chão de fábrica e anexar fotos ao sistema.",
+        "NSLocationWhenInUseUsageDescription": "O Core Cut usa sua localização no ponto e nas rotas de entrega.",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "buildNumber": "6"
+    },
+    "android": {
+      "package": "br.com.cutcore.erp",
+      "versionCode": 6,
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "CAMERA",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ],
+      "blockedPermissions": [
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "SYSTEM_ALERT_WINDOW"
+      ],
+      "softwareKeyboardLayoutMode": "resize",
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "O Core Cut usa a câmera para confirmar o seu rosto ao entrar, ler as etiquetas das peças no chão de fábrica e anexar fotos no sistema.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationWhenInUsePermission": "O Core Cut usa a localização para o ponto e para a rota das entregas."
+        }
+      ],
+      "expo-font"
+    ],
+    "extra": {
+      "apiUrl": "https://www.cutcore.com.br",
+      "eas": {
+        "projectId": "dcb6bd72-ed72-44b4-b74b-91c43dbf1e77"
+      }
+    },
+    "owner": "irodti"
+  }
+}

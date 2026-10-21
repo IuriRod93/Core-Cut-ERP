@@ -8,3 +8,6 @@ backend/data/
 .env
 .env.*
 !.env.example
+
+# códigos de pagamento de teste (não publicar)
+qr-pix-teste/

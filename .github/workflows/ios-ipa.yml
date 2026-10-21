@@ -1,0 +1,117 @@
+# Gera o .ipa do aplicativo Core Cut ERP (pasta CoreCut-App) para iPhone num Mac do GitHub (macOS + Xcode).
+#
+# Como rodar: GitHub → Actions → "iOS (.ipa)" → Run workflow. Também roda sozinho ao criar uma tag app-v*.
+# O arquivo sai em "Artifacts" no fim da execução. Tag: app-v1.0.5 (as tags v* ficam para o sistema).
+#
+# Sem certificado da Apple: gera um .ipa SEM assinatura. Ele não instala direto no iPhone; serve para assinar
+#   depois (Sideloadly/AltStore com o seu Apple ID, ou o Xcode).
+# Com certificado (conta Apple Developer): cadastre em Settings → Secrets and variables → Actions:
+#   IOS_P12_BASE64        certificado de distribuição (.p12) em base64   →  base64 -i cert.p12 | pbcopy
+#   IOS_P12_PASSWORD      senha do .p12
+#   IOS_PROFILE_BASE64    perfil de provisionamento (.mobileprovision) em base64 (Ad Hoc ou App Store)
+# e o .ipa sai assinado (Ad Hoc instala nos iPhones cadastrados no perfil; App Store vai para o TestFlight).
+name: iOS (.ipa)
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['app-v*']
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: CoreCut-App
+    env:
+      HAS_SIGNING: ${{ secrets.IOS_P12_BASE64 != '' && secrets.IOS_PROFILE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: CoreCut-App/package-lock.json
+
+      - name: Dependências
+        run: npm ci
+
+      - name: Versão do aplicativo
+        id: version
+        run: |
+          echo "name=$(node -p "require('./app.json').expo.version")" >> "$GITHUB_OUTPUT"
+          echo "build=$(node -p "require('./app.json').expo.ios.buildNumber || '1'")" >> "$GITHUB_OUTPUT"
+          xcodebuild -version
+
+      # gera a pasta ios/ a partir do app.json (permissões, ícones, versão) e instala os pods
+      - name: Projeto iOS (Expo prebuild)
+        run: npx expo prebuild --platform ios --clean
+        env:
+          CI: 1
+
+      - name: Compilar (Release, sem assinatura)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace ios/CoreCutERP.xcworkspace \
+            -scheme CoreCutERP \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/CoreCutERP.xcarchive" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | tail -n 80
+
+      - name: Montar o .app
+        run: |
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$RUNNER_TEMP/CoreCutERP.xcarchive/Products/Applications/CoreCutERP.app" "$RUNNER_TEMP/ipa/Payload/"
+
+      - name: Assinar (com os certificados dos Secrets)
+        if: env.HAS_SIGNING == 'true'
+        env:
+          P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          echo "$PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | head -n 1 | awk '{print $2}')"
+          test -n "$IDENTITY" || { echo "Nenhum certificado de assinatura no .p12" >&2; exit 1; }
+
+          APP="$RUNNER_TEMP/ipa/Payload/CoreCutERP.app"
+          security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" > "$RUNNER_TEMP/profile.plist"
+          /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' "$RUNNER_TEMP/profile.plist" > "$RUNNER_TEMP/entitlements.plist"
+          cp "$RUNNER_TEMP/profile.mobileprovision" "$APP/embedded.mobileprovision"
+          # primeiro as bibliotecas embutidas, depois o aplicativo com as permissões do perfil
+          find "$APP" -depth \( -name '*.framework' -o -name '*.dylib' -o -name '*.appex' \) -print0 | while IFS= read -r -d '' item; do
+            codesign --force --sign "$IDENTITY" --keychain "$KEYCHAIN" --timestamp=none "$item"
+          done
+          codesign --force --sign "$IDENTITY" --keychain "$KEYCHAIN" --entitlements "$RUNNER_TEMP/entitlements.plist" --timestamp=none "$APP"
+          codesign --verify --deep --strict "$APP"
+          echo "SIGNED=assinado" >> "$GITHUB_ENV"
+
+      - name: Gerar o .ipa
+        run: |
+          NAME="CoreCut-ERP-${{ steps.version.outputs.name }}-${SIGNED:-sem-assinatura}.ipa"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$RUNNER_TEMP/$NAME" Payload)
+          echo "IPA_NAME=$NAME" >> "$GITHUB_ENV"
+          ls -la "$RUNNER_TEMP/$NAME"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.IPA_NAME }}
+          path: ${{ runner.temp }}/${{ env.IPA_NAME }}
+          retention-days: 30
