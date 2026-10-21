@@ -15,6 +15,8 @@ interface AppInfo {
   planName: string | null
   available: boolean
   version: { versionName: string; versionCode: number; sizeBytes: number; sha256: string; builtAt: string } | null
+  /** link do TestFlight/App Store quando o app do iPhone estiver publicado */
+  iosUrl?: string | null
 }
 
 const sizeLabel = (bytes: number) => `${Math.round(bytes / 1_048_576)} MB`
@@ -43,6 +45,8 @@ export function AppDownloadPage() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+  // iPad recente se apresenta como Mac: a tela de toque denuncia
+  const isIOS = typeof navigator !== 'undefined' && (/iPhone|iPad|iPod/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))
   const pageUrl = `${window.location.origin}/app?baixar=1`
 
   useEffect(() => {
@@ -99,7 +103,7 @@ export function AppDownloadPage() {
 
         <Box sx={{ bgcolor: '#fff', border: `1px solid ${colors.border}`, borderRadius: 3, p: { xs: 2.5, sm: 4 } }}>
           <Typography variant="overline" color="primary">
-            Aplicativo Android
+            Aplicativo Android e iPhone
           </Typography>
           <Typography variant="h3" sx={{ mb: 1 }}>
             Core Cut ERP no seu celular
@@ -155,9 +159,14 @@ export function AppDownloadPage() {
                   ) : (
                     <Alert severity="warning">O arquivo do aplicativo ainda não foi publicado neste servidor. Peça ao administrador para publicar a versão.</Alert>
                   )}
-                  {!isAndroid ? (
+                  {!isAndroid && !isIOS ? (
                     <Alert severity="info" sx={{ mt: 2 }}>
-                      Para instalar, leia o QR code com o celular Android (ele pede o login e baixa o aplicativo) ou abra esta página nele.
+                      Para instalar, leia o QR code com o celular Android (ele pede o login e baixa o aplicativo) ou abra esta página nele. No iPhone, veja as instruções abaixo.
+                    </Alert>
+                  ) : null}
+                  {isIOS ? (
+                    <Alert severity="info" sx={{ mt: 2 }}>
+                      Você está num iPhone: o arquivo acima é só para Android. Veja abaixo como instalar no iPhone.
                     </Alert>
                   ) : null}
                 </Box>
@@ -172,6 +181,45 @@ export function AppDownloadPage() {
                 <li>Toque em <b>Instalar</b> e depois em <b>Abrir</b>.</li>
                 <li>Entre com o mesmo usuário e senha do sistema.</li>
                 <li>No primeiro acesso, cadastre o rosto. Nos próximos, o aplicativo confirma que é você.</li>
+              </Box>
+
+
+              <Box id="iphone" sx={{ mt: 4, p: 2.5, borderRadius: 2, border: `1px solid ${isIOS ? colors.brand : colors.border}`, bgcolor: isIOS ? colors.brandTint : 'transparent' }}>
+                <Typography variant="h5" sx={{ mb: 1 }}>
+                  No iPhone
+                </Typography>
+                {info.iosUrl ? (
+                  <>
+                    <Typography color="text.secondary" sx={{ mb: 1.5 }}>
+                      O aplicativo do iPhone é instalado pela Apple (TestFlight ou App Store), com a mesma confirmação por rosto do Android.
+                    </Typography>
+                    <Button variant="contained" href={info.iosUrl} target="_blank" rel="noopener" sx={{ mb: 2 }}>
+                      Instalar no iPhone
+                    </Button>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      Enquanto isso, ou se preferir, dá para usar o sistema como aplicativo direto pelo Safari:
+                    </Typography>
+                  </>
+                ) : (
+                  <Typography color="text.secondary" sx={{ mb: 1.5 }}>
+                    A Apple não permite instalar aplicativos baixados de sites. No iPhone, o Core Cut é instalado pelo Safari e abre em tela cheia, como
+                    aplicativo, com os mesmos dados, a câmera para ler as etiquetas e o apontamento sem internet no chão de fábrica:
+                  </Typography>
+                )}
+                <Box component="ol" sx={{ m: 0, pl: 3, '& li': { mb: 1 } }}>
+                  <li>
+                    Abra <b>{window.location.host}</b> no <b>Safari</b> e entre com seu usuário e senha.
+                  </li>
+                  <li>
+                    Toque em <b>Compartilhar</b> (o quadrado com a seta para cima).
+                  </li>
+                  <li>
+                    Escolha <b>Adicionar à Tela de Início</b> e toque em <b>Adicionar</b>.
+                  </li>
+                  <li>
+                    Abra pelo ícone <b>Core Cut</b> na tela de início. Na primeira leitura de etiqueta, permita o uso da câmera.
+                  </li>
+                </Box>
               </Box>
 
               {info.version?.sha256 ? (

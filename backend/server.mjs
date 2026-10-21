@@ -1176,7 +1176,9 @@ async function handleAuthenticated(req, res, path, query, user, token) {
   // ---- aplicativo Android: quem tem direito (planos Profissional e Industrial) -------------------
   if (url === '/api/mobile/app-info' && method === 'GET') {
     const entitlement = appEntitlement(user)
-    return send(res, 200, { ...entitlement, version: appVersionInfo(), available: existsSync(appApkPath) })
+    // iPhone: a Apple não permite instalar pelo site; o link do TestFlight/App Store vem do .env quando publicado
+    const iosUrl = entitlement.eligible && /^https:\/\//i.test(process.env.IOS_APP_URL ?? '') ? process.env.IOS_APP_URL : null
+    return send(res, 200, { ...entitlement, version: appVersionInfo(), available: existsSync(appApkPath), iosUrl })
   }
   if (url === '/api/mobile/download-link' && method === 'POST') {
     rateLimit(`app-link:${user.id}`, 20, 600_000)
