@@ -1,0 +1,44 @@
+# Build do aplicativo Core Cut ERP para iPhone (.ipa) no Codemagic (codemagic.io), Mac na nuvem.
+# Plano gratuito: 500 minutos/mês em Mac M2. Rodar: Codemagic → app Core-Cut-ERP → Start new build →
+# workflow "iOS (.ipa)". O arquivo fica em Artifacts no fim do build.
+#
+# Sai SEM assinatura: o iPhone não instala direto; assine com o Sideloadly/AltStore (Apple ID) ou o Xcode.
+workflows:
+  ios-ipa:
+    name: iOS (.ipa)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    working_directory: CoreCut-App
+    environment:
+      node: 22
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Dependências
+        script: npm ci
+      - name: Projeto iOS (Expo prebuild)
+        # gera a pasta ios/ a partir do app.json (permissões, ícones, versão) e instala os pods
+        script: CI=1 npx expo prebuild --platform ios --clean
+      - name: Compilar (Release, sem assinatura)
+        script: |
+          set -o pipefail
+          xcodebuild -version
+          xcodebuild \
+            -workspace ios/CoreCutERP.xcworkspace \
+            -scheme CoreCutERP \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$CM_BUILD_DIR/CoreCutERP.xcarchive" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | tail -n 80
+      - name: Gerar o .ipa
+        script: |
+          VERSION="$(node -p "require('./app.json').expo.version")"
+          mkdir -p "$CM_BUILD_DIR/ipa/Payload" build
+          cp -R "$CM_BUILD_DIR/CoreCutERP.xcarchive/Products/Applications/CoreCutERP.app" "$CM_BUILD_DIR/ipa/Payload/"
+          (cd "$CM_BUILD_DIR/ipa" && zip -qry "$CM_BUILD_DIR/CoreCut-App/build/CoreCut-ERP-$VERSION-sem-assinatura.ipa" Payload)
+          ls -la build
+    artifacts:
+      - build/*.ipa
