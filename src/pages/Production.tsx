@@ -44,6 +44,10 @@ import { brl, daysUntil, fmtDate, fmtDuration, matches, todayISO, addDaysISO, ui
 import { colors } from '../theme'
 import type { OpOperation, OpStatus, ProductionOrder } from '../types'
 
+/** Mensagem da aprovação da qualidade (com a entrega agendada sozinha, quando houver). */
+const approvedMessage = (res: { delivery?: { code?: string; date?: string } | null }) =>
+  res.delivery ? `Qualidade aprovada. Entrega ${res.delivery.code ?? ''} agendada para ${(res.delivery.date ?? '').split('-').reverse().join('/')} em Entregas.` : 'Qualidade aprovada e ordem concluída.'
+
 const BOARD: OpStatus[] = ['planejada', 'liberada', 'em_producao', 'qualidade', 'concluida']
 
 export const opProgress = (o: ProductionOrder) => {
@@ -101,8 +105,11 @@ export function ProductionPage() {
     }
     if (status === 'concluida') {
       void api
-        .post(`/production-orders/${r.draggableId}/quality/approve`)
-        .then(() => refreshCollection('productionOrders'))
+        .post<{ delivery?: { code?: string; date?: string } | null }>(`/production-orders/${r.draggableId}/quality/approve`)
+        .then((res) => {
+          toast.success(approvedMessage(res))
+          return refreshCollection('productionOrders')
+        })
         .catch((error: Error) => {
           void refreshCollection('productionOrders')
           toast.error(error.message)
@@ -417,9 +424,9 @@ function OrderDetail({ order, onClose, onEdit, onOpenProject }: { order: Product
       return
     }
     if (status === 'concluida') {
-      await api.post(`/production-orders/${order.id}/quality/approve`)
-      await Promise.all([refreshCollection('productionOrders'), refreshCollection('qualityInspections')])
-      toast.success('Qualidade aprovada e ordem concluída.')
+      const res = await api.post<{ delivery?: { code?: string; date?: string } | null }>(`/production-orders/${order.id}/quality/approve`)
+      await Promise.all([refreshCollection('productionOrders'), refreshCollection('qualityInspections'), refreshCollection('installations')])
+      toast.success(approvedMessage(res))
       return
     }
     const patch: Partial<ProductionOrder> = { status }

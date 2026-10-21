@@ -280,6 +280,20 @@ test('roteiro de fábrica de ponta a ponta: orçamento aprovado → ordem → ap
   assert.equal(ok.status, 200, JSON.stringify(ok.json))
   assert.equal(ok.json.productionOrder.status, 'concluida')
 
+  // a entrega já nasce agendada (dia útil a partir de amanhã), o projeto vai para expedição
+  const delivery = ok.json.delivery
+  assert.ok(delivery, 'entrega não foi agendada')
+  assert.equal(delivery.kind, 'entrega')
+  assert.equal(delivery.status, 'agendada')
+  assert.equal(delivery.productionOrderId, order.id)
+  assert.equal(delivery.clientId, client.id)
+  assert.ok(delivery.date > new Date().toISOString().slice(0, 10))
+  assert.ok(![0, 6].includes(new Date(`${delivery.date}T12:00:00`).getDay()), 'entrega caiu no fim de semana')
+  assert.equal(delivery.checklist.length, 3)
+  assert.equal((await call('GET', `/data/projects/${order.projectId}`)).json.stageId, 'expedicao')
+  // aprovar de novo não duplica a entrega
+  assert.equal((await call('GET', '/data/installations')).json.filter((i) => i.productionOrderId === order.id).length, 1)
+
   // relatórios: previsto x realizado e paradas
   const saved = (await call('GET', `/data/productionOrders/${order.id}`)).json
   const today = new Date().toISOString().slice(0, 10)
@@ -298,6 +312,7 @@ test('roteiro de fábrica de ponta a ponta: orçamento aprovado → ordem → ap
   await asPaula('POST', '/auth/change-password', { currentPassword: 'Fabrica-Forte-9', newPassword: 'Serra-Coladeira-77' })
   const notes = await asPaula('GET', '/notifications')
   assert.ok(notes.items.some((n) => n.userId === pcp.id && n.kind === 'quality' && /Lascou a borda/.test(n.body)), JSON.stringify(notes).slice(0, 300))
+  assert.ok(notes.items.some((n) => n.title === 'Entrega para agendar'), 'PCP não foi avisado da entrega')
 })
 
 test('cronômetro esquecido: corte no fim do expediente (no fuso da empresa) ou no limite de horas', () => {

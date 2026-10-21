@@ -661,6 +661,8 @@ export interface Installation extends Doc {
   date: string
   time?: string
   status: 'agendada' | 'em_rota' | 'em_andamento' | 'concluida' | 'reagendada' | 'cancelada'
+  /** ordem de produção que originou a entrega (agendada ao aprovar a qualidade) */
+  productionOrderId?: string
   address?: string
   teamIds?: string[]
   vehicleId?: string

@@ -367,6 +367,49 @@ const cutStepOf = (order) => {
   return ops.find((op) => /corte|seccionadora|serra/i.test(op.name ?? '')) ?? ops[0]
 }
 
+/** Próximo dia útil (seg–sex) a partir de uma data AAAA-MM-DD. */
+const nextBusinessDay = (iso) => {
+  const date = new Date(`${iso}T12:00:00`)
+  while (date.getDay() === 0 || date.getDay() === 6) date.setDate(date.getDate() + 1)
+  return date.toISOString().slice(0, 10)
+}
+
+/**
+ * Qualidade aprovada: com todas as ordens do projeto concluídas, a entrega já nasce agendada (cliente,
+ * endereço, checklist), o projeto vai para Expedição e quem cuida das entregas é avisado.
+ */
+function scheduleDeliveryAfterQuality(user, order) {
+  if (!order.projectId) return null
+  const existing = db.col('installations').find((item) => item.productionOrderId === order.id && item.status !== 'cancelada')
+  if (existing) return existing
+  const pending = db.col('productionOrders').some((other) => other.projectId === order.projectId && other.id !== order.id && !['concluida', 'cancelada'].includes(other.status))
+  if (pending) return null // ainda há ordem do projeto em produção: a entrega sai com a última
+  const project = db.get('projects', order.projectId)
+  const client = db.get('clients', order.clientId ?? project?.clientId ?? '')
+  const tomorrow = dateOnly(1)
+  const date = nextBusinessDay(order.dueDate && order.dueDate > tomorrow ? order.dueDate : tomorrow)
+  const delivery = db.insert('installations', {
+    code: db.nextCode('ENT'),
+    kind: 'entrega',
+    projectId: order.projectId,
+    clientId: client?.id ?? project?.clientId ?? null,
+    productionOrderId: order.id,
+    date,
+    status: 'agendada',
+    address: [client?.address, [client?.city, client?.state].filter(Boolean).join('/')].filter(Boolean).join(' — '),
+    teamIds: [],
+    checklist: ['Conferir volumes e peças com a ordem', 'Proteger os móveis para o transporte', 'Assinatura do cliente no recebimento'].map((text) => ({ id: randomUUID(), text, done: false })),
+    notes: `Agendada sozinha ao aprovar a qualidade da ${order.code}. Confirme a data com o cliente.`,
+  })
+  audit(user, 'delivery_from_quality', 'installations', delivery, { productionOrderId: order.id })
+  // projeto ainda em produção/planejamento passa para expedição
+  if (project && ['planejamento', 'producao'].includes(project.stageId)) db.update('projects', project.id, { stageId: 'expedicao' })
+  const where = project?.name ?? order.title ?? order.code
+  for (const target of db.col('users').filter((u) => u.active !== false && u.id !== user.id && userModules(u).includes('logistics')))
+    notify(db, { userId: target.id, kind: 'automation', title: 'Entrega para agendar', body: `${where}: produção aprovada na qualidade. Entrega marcada para ${date.split('-').reverse().join('/')} — confirme com o cliente.`, path: '/entregas', projectId: order.projectId, key: `delivery:${delivery.id}` })
+  return delivery
+}
+
 /** Abre (ou reaproveita) a inspeção de qualidade pendente e coloca a ordem em "qualidade". */
 function startQualityInspection(user, order) {
   const pending = db.col('qualityInspections').find((inspection) => inspection.productionOrderId === order.id && inspection.status === 'pending')
@@ -1693,7 +1736,8 @@ async function handleAuthenticated(req, res, path, query, user, token) {
     const approvedInspection = db.update('qualityInspections', inspection.id, { status: 'approved', checkedAt: now, checkedBy: user.id, checkedByName: user.name })
     const updated = db.update('productionOrders', order.id, { status: 'concluida', qualityStatus: 'approved', completedAt: order.completedAt ?? now })
     audit(user, 'quality_approve', 'productionOrders', updated, { inspectionId: inspection.id })
-    return send(res, 200, { productionOrder: updated, inspection: approvedInspection })
+    const delivery = scheduleDeliveryAfterQuality(user, updated)
+    return send(res, 200, { productionOrder: updated, inspection: approvedInspection, delivery })
   }
 
   const releaseProduction = url.match(/^\/api\/production-orders\/([^/]+)\/release$/)
