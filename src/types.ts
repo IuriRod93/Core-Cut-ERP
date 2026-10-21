@@ -421,6 +421,9 @@ export interface OpOperation {
   finishedAt?: string | null
   /** trechos trabalhados (quem estava com a etapa em andamento) */
   segments?: { operatorId: string | null; operatorName: string; start: string; end: string; seconds: number }[]
+  /** etiquetas feitas nesta etapa ("planoId:peçaId:unidade"): o roteiro avança peça por peça */
+  piecesDone?: string[]
+  piecesAt?: string
   /** pausas com motivo; a aberta tem end = null */
   pauses?: { start: string; end: string | null; seconds?: number; reason: PauseReason; note?: string; byId?: string; byName?: string }[]
 }

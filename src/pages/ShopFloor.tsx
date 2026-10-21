@@ -5,6 +5,8 @@ import { Stack } from '../components/Stack'
 import { ArticleIcon, BadgeIcon, CheckCircleIcon, PauseIcon, PlayArrowIcon, PrecisionManufacturingIcon, QrCodeScannerIcon, WarningAmberIcon } from '../components/icons'
 import { QrScanDialog } from '../components/QrScanDialog'
 import { StepDetailsDialog } from '../components/StepDetailsDialog'
+import { LabelsDialog } from '../components/LabelsDialog'
+import { unitKey } from '../lib/planUnits'
 import { resolveScan } from '../domain/shopfloor'
 import { PAUSE_REASONS, type PauseReason } from '../../shared/shopfloor.mjs'
 import { Dot, EmptyState, LoadingState, PageHeader, ProgressLine } from '../components/ui'
@@ -65,6 +67,7 @@ export function ShopFloorPage() {
   const [finish, setFinish] = useState<{ order: ProductionOrder; op: OpOperation } | null>(null)
   const [pausing, setPausing] = useState<{ order: ProductionOrder; op: OpOperation } | null>(null)
   const [details, setDetails] = useState<{ order: ProductionOrder; op: OpOperation } | null>(null)
+  const [labels, setLabels] = useState<{ orderIds: string[]; focusOpId?: string; title: string } | null>(null)
   // planos da ordem; sem vínculo, os planos do projeto
   const planIdsOf = (order: ProductionOrder) => (order.cutPlanIds?.length ? order.cutPlanIds : data.cutPlans.filter((p) => order.projectId && p.projectId === order.projectId).map((p) => p.id))
   const [pauseNote, setPauseNote] = useState('')
@@ -284,11 +287,41 @@ export function ShopFloorPage() {
     setIssueText('')
   }
 
-  const onScan = (text: string) => {
+  /** Total de etiquetas da ordem (pelo resumo dos planos, sem baixar as peças). */
+  const unitsTotal = (order: ProductionOrder) => planIdsOf(order).reduce((sum, id) => sum + (data.cutPlans.find((p) => p.id === id)?.pieceCount ?? 0), 0)
+
+  /** Marca/desmarca etiquetas feitas numa etapa (em lotes, para planos muito grandes). */
+  const markUnits = async (order: ProductionOrder, op: OpOperation, keys: string[], done: boolean) => {
+    try {
+      let last: { done: number; total: number } | null = null
+      for (let i = 0; i < keys.length; i += 2000)
+        last = await api.post<{ done: number; total: number }>(actionPath(order.id, op.id, 'pieces'), { keys: keys.slice(i, i + 2000), done }, operator ? { 'X-Operator': operator.ticket } : undefined)
+      await refreshCollection('productionOrders')
+      return last
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível marcar as etiquetas.')
+      void refreshCollection('productionOrders')
+      return null
+    }
+  }
+
+  const onScan = async (text: string) => {
     const found = resolveScan(text, data.productionOrders, data.cutPlans)
     if (found.kind === 'none') return toast.error(found.message)
-    setScanOpen(false)
     setScanned({ orderIds: found.orderIds, label: found.label })
+    // código de ordem/plano fecha o leitor; etiqueta de peça mantém aberto para ler a próxima
+    if (!found.unit) return setScanOpen(false)
+    // etiqueta de peça: marca como feita na etapa em andamento (de preferência a deste setor / deste operador)
+    const who = operator?.id ?? user?.id
+    const running = data.productionOrders
+      .filter((o) => found.orderIds.includes(o.id))
+      .flatMap((order) => order.operations.filter((op) => op.status === 'em_andamento').map((op) => ({ order, op })))
+    const target = running.find((r) => r.op.workCenterId === selected) ?? running.find((r) => r.op.operatorId === who) ?? (running.length === 1 ? running[0] : undefined)
+    if (!target) return toast.info('Etiqueta lida. Inicie a etapa deste setor para marcar a peça como feita.')
+    const key = unitKey(found.unit.planId, found.unit.pieceId, found.unit.n)
+    if (target.op.piecesDone?.includes(key)) return toast.info(`Esta peça já estava marcada em ${target.op.name}.`)
+    const res = await markUnits(target.order, target.op, [key], true)
+    if (res) toast.success(`Peça ${found.unit.n} marcada em ${target.op.name} · ${res.done}/${res.total}`)
   }
 
   const openOperatorDialog = async () => {
@@ -374,6 +407,9 @@ export function ShopFloorPage() {
               Etapas pendentes desta leitura em todos os setores.
             </Typography>
             <Box sx={{ flex: 1 }} />
+            <Button size="small" onClick={() => setLabels({ orderIds: scanned.orderIds, title: `Etiquetas — ${scanned.label}` })}>
+              Ver etiquetas
+            </Button>
             <Button size="small" onClick={() => setScanOpen(true)}>
               Ler outra
             </Button>
@@ -405,6 +441,15 @@ export function ShopFloorPage() {
                 Mostrando as etapas pendentes deste projeto em todos os setores.
               </Typography>
               <Box sx={{ flex: 1 }} />
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={<QrCodeScannerIcon />}
+                disabled={!projectOrders.some((o) => ['liberada', 'em_producao'].includes(o.status))}
+                onClick={() => setLabels({ orderIds: projectOrders.filter((o) => ['liberada', 'em_producao'].includes(o.status)).map((o) => o.id), title: `Etiquetas — ${data.projects.find((p) => p.id === projectFilter)?.name ?? 'projeto'}` })}
+              >
+                Etiquetas do projeto
+              </Button>
               <Button size="small" onClick={() => navigate(`/projetos/${projectFilter}`)}>
                 Abrir projeto
               </Button>
@@ -525,6 +570,19 @@ export function ShopFloorPage() {
                   <Button size="small" startIcon={<ArticleIcon />} onClick={() => setDetails({ order, op })} sx={{ mt: 0.5, ml: -0.75 }}>
                     Peças, desenhos e observações
                   </Button>
+                  {(() => {
+                    const total = unitsTotal(order)
+                    if (!total) return null
+                    const done = op.piecesDone?.length ?? 0
+                    return (
+                      <Box sx={{ mt: 1 }}>
+                        <ProgressLine value={Math.round((done / total) * 100)} label={`Etiquetas feitas nesta etapa: ${done}/${total}`} />
+                        <Button size="small" startIcon={<QrCodeScannerIcon />} onClick={() => setLabels({ orderIds: [order.id], focusOpId: op.id, title: `${order.code} · ${op.name}` })} sx={{ mt: 0.5, ml: -0.75 }}>
+                          Etiquetas
+                        </Button>
+                      </Box>
+                    )
+                  })()}
                 </Box>
 
                 <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 1.5 }}>
@@ -595,6 +653,16 @@ export function ShopFloorPage() {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             {finish?.order.code} · {maps.workCenters.get(finish?.op.workCenterId ?? '')?.name}
           </Typography>
+          {(() => {
+            if (!finish) return null
+            const total = unitsTotal(finish.order)
+            const done = finish.op.piecesDone?.length ?? 0
+            return total && done < total ? (
+              <Typography variant="body2" sx={{ mb: 2, color: colors.warning, fontWeight: 600 }}>
+                Faltam {total - done} de {total} etiquetas marcadas nesta etapa. Conclua só se todas as peças passaram por aqui.
+              </Typography>
+            ) : null
+          })()}
           <NumberField label="Quantidade produzida" value={qty} onChange={setQty} min={0} decimals={0} />
         </DialogContent>
         <DialogActions>
@@ -628,6 +696,17 @@ export function ShopFloorPage() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {labels ? (
+        <LabelsDialog
+          orders={data.productionOrders.filter((o) => labels.orderIds.includes(o.id))}
+          planIdsOf={planIdsOf}
+          focusOpId={labels.focusOpId}
+          title={labels.title}
+          onMark={async (order, op, keys, done) => Boolean(await markUnits(order, op, keys, done))}
+          onClose={() => setLabels(null)}
+        />
+      ) : null}
 
       {details ? <StepDetailsDialog order={details.order} op={details.op} planIds={planIdsOf(details.order)} onClose={() => setDetails(null)} /> : null}
 

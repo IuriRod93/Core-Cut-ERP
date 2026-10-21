@@ -3,7 +3,7 @@ import { PAUSE_REASONS, type PauseReason } from '../../shared/shopfloor.mjs'
 
 const ACTIVE = ['liberada', 'em_producao']
 
-export type ScanResult = { kind: 'orders'; orderIds: string[]; label: string } | { kind: 'none'; message: string }
+export type ScanResult = { kind: 'orders'; orderIds: string[]; label: string; unit?: { planId: string; pieceId: string; n: number } } | { kind: 'none'; message: string }
 
 /**
  * Interpreta o que foi lido no Chão de fábrica: o QR da etiqueta (link do plano de corte com a peça),
@@ -15,8 +15,13 @@ export function resolveScan(text: string, orders: ProductionOrder[], plans: { id
   const active = orders.filter((o) => ACTIVE.includes(o.status))
 
   let planId: string | null = null
+  let unit: { planId: string; pieceId: string; n: number } | undefined
   try {
-    planId = new URL(raw).searchParams.get('plano')
+    const params = new URL(raw).searchParams
+    planId = params.get('plano')
+    const pieceId = params.get('peca')
+    const n = Number(params.get('un'))
+    if (planId && pieceId && Number.isInteger(n) && n > 0) unit = { planId, pieceId, n }
   } catch {
     /* não é link: segue como código */
   }
@@ -34,7 +39,7 @@ export function resolveScan(text: string, orders: ProductionOrder[], plans: { id
   const plan = plans.find((p) => p.id === planId)
   if (!linked.length && plan?.projectId) linked = active.filter((o) => o.projectId === plan.projectId)
   if (!linked.length) return { kind: 'none', message: 'A peça desta etiqueta não está em nenhuma ordem liberada ou em produção.' }
-  return { kind: 'orders', orderIds: linked.map((o) => o.id), label: plan?.code ? `Plano ${plan.code}` : 'Peça da etiqueta' }
+  return { kind: 'orders', orderIds: linked.map((o) => o.id), label: plan?.code ? `Plano ${plan.code}` : 'Peça da etiqueta', unit }
 }
 
 type Range = { from: string; to: string; now?: number }

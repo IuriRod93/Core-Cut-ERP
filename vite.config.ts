@@ -13,12 +13,26 @@ export default defineConfig({
       // O service worker NÃO pré-carrega os .js: eles são entregues só a quem tem sessão e a lista de arquivos
       // do aplicativo não deve ficar publicada em sw.js.
       workbox: {
-        globPatterns: ['**/*.{html,css,ico,png,svg,woff2,webmanifest}'],
+        // A página (index.html) NÃO entra no pré-cache: a cópia guardada levaria junto os cabeçalhos da época
+        // (Permissions-Policy, CSP) e, como o HTML quase não muda, nunca seria atualizada.
+        globPatterns: ['**/*.{css,ico,png,svg,woff2,webmanifest}'],
         globIgnores: ['site/**', 'downloads/**'],
-        navigateFallbackDenylist: [/^\/api\//, /^\/site\//, /^\/downloads\//],
+        navigateFallback: null,
         // Para o chão de fábrica abrir sem internet. Nada é pré-carregado: guarda só o que o usuário
-        // logado já baixou, e os dois caches são apagados no login e no logout (src/lib/offlineCache.ts).
+        // logado já baixou, e os caches de dados são apagados no login e no logout (src/lib/offlineCache.ts).
         runtimeCaching: [
+          {
+            // páginas: sempre da rede (cabeçalhos atuais); sem internet, a última cópia da casca do app
+            urlPattern: ({ request, url, sameOrigin }) => sameOrigin && request.mode === 'navigate' && !/^\/(api|site|downloads)\//.test(url.pathname),
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'corecut-pages',
+              networkTimeoutSeconds: 8,
+              cacheableResponse: { statuses: [200] },
+              // todas as rotas do app são o mesmo index.html: uma única cópia
+              plugins: [{ cacheKeyWillBeUsed: async () => '/index.html' }],
+            },
+          },
           {
             urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith('/assets/') && url.pathname.endsWith('.js'),
             handler: 'CacheFirst',

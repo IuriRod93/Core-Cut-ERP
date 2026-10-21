@@ -337,3 +337,36 @@ test('agendador pausa a etapa esquecida no horário do corte e avisa o operador'
   const notes = (await call('GET', '/notifications')).json.items
   assert.ok(notes.some((n) => n.kind === 'shopfloor' && n.body.includes('OP')))
 })
+
+test('etiquetas: a etapa avança peça por peça; só etiquetas dos planos da ordem e com a etapa iniciada', async () => {
+  const pieces = [
+    { id: 'lat', label: 'Lateral', length: 720, width: 560, quantity: 2, rotate: false },
+    { id: 'base', label: 'Base', length: 764, width: 560, quantity: 1, rotate: false },
+  ]
+  const plan = (await call('POST', '/data/cutPlans', { body: { title: 'Plano etiquetas', status: 'rascunho', pieces, groups: [] } })).json
+  const { id, code, ...draft } = makeOrder({ status: 'planejada', cutPlanIds: [plan.id] })
+  const order = (await call('POST', '/data/productionOrders', { body: { title: 'Etiquetas', priority: 'media', ...draft } })).json
+  await call('POST', `/production-orders/${order.id}/release`)
+  const marks = (opId, keys, done = true) => call('POST', `/production-orders/${order.id}/operations/${opId}/pieces`, { body: { keys, done } })
+  const k = (pieceId, n) => `${plan.id}:${pieceId}:${n}`
+
+  assert.equal((await marks('op-0', [k('lat', 1)])).status, 409) // etapa não iniciada
+  assert.equal((await call('POST', `/production-orders/${order.id}/operations/op-0/start`)).status, 200)
+  assert.equal((await marks('op-0', [k('lat', 3)])).status, 400) // a lateral só tem 2 unidades
+  assert.equal((await marks('op-0', ['outro-plano:lat:1'])).status, 400)
+
+  let r = await marks('op-0', [k('lat', 1), k('lat', 2)])
+  assert.equal(r.status, 200, JSON.stringify(r.json))
+  assert.deepEqual([r.json.done, r.json.total], [2, 3])
+  r = await marks('op-0', [k('lat', 2)], false)
+  assert.deepEqual([r.json.done, r.json.total], [1, 3])
+  r = await marks('op-0', [k('lat', 1), k('base', 1)]) // repetir não duplica
+  assert.deepEqual(r.json.productionOrder.operations.find((o) => o.id === 'op-0').piecesDone.sort(), [k('base', 1), k('lat', 1)].sort())
+})
+
+test('leitura: o QR da etiqueta traz plano, peça e unidade', () => {
+  const orders = [{ id: 'a', code: 'OP-1', status: 'em_producao', projectId: 'p1', cutPlanIds: ['pl1'], items: [], operations: [] }]
+  const found = resolveScan('https://x.com/plano-de-corte?plano=pl1&peca=lat&un=2', orders, [{ id: 'pl1', projectId: 'p1' }])
+  assert.deepEqual(found.unit, { planId: 'pl1', pieceId: 'lat', n: 2 })
+  assert.equal(resolveScan('OP-1', orders, []).unit, undefined)
+})

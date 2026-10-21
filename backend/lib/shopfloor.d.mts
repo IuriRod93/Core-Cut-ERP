@@ -10,3 +10,4 @@ export function applyOperationAction(
 ): { operations: OpOperation[]; status?: ProductionOrder['status']; finished: boolean; unchanged?: boolean }
 export function runningOperationsOf(orders: ProductionOrder[], userId: string): { orderId: string; opId: string; label: string }[]
 export function nextWallTime(fromMs: number, hhmm: string, timeZone: string): number | null
+export function unitKey(planId: string, pieceId: string, n: number): string

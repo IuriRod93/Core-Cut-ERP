@@ -20,7 +20,7 @@ import { createMailer } from './lib/mailer.mjs'
 import { createGeo, distanceMeters, isLat, isLng } from './lib/geo.mjs'
 import { createProductionTasks } from './lib/production-tasks.mjs'
 import { syncPlanOffcuts } from './lib/offcuts.mjs'
-import { applyOperationAction, forgottenTimers, runningOperationsOf } from './lib/shopfloor.mjs'
+import { applyOperationAction, forgottenTimers, markPieces, runningOperationsOf, unitKey } from './lib/shopfloor.mjs'
 import { createPortal, newPortalToken, validPortalToken } from './lib/portal.mjs'
 import { buildFocusPayload, companyProblems, createFocusClient, createSecretBox, invoiceProblems, mapFocusResponse, totalsOf } from './lib/fiscal.mjs'
 import { FACE_MATCH_DISTANCE, FACE_MESSAGES, createFaceEngine, createFaceStore, createFakeFaceEngine, createTickets, decodeImage, euclidean } from './lib/face.mjs'
@@ -1511,6 +1511,25 @@ async function handleAuthenticated(req, res, path, query, user, token) {
     const ticket = operatorTickets.get(req.headers['x-operator'])
     if (ticket && ticket.sessionUserId === user.id) operatorTickets.consume(req.headers['x-operator'])
     return send(res, 200, { ok: true })
+  }
+
+  // ---- chão de fábrica: etiquetas feitas por etapa (concluir aos poucos) ----
+  const piecesAction = url.match(/^\/api\/production-orders\/([^/]+)\/operations\/([^/]+)\/pieces$/)
+  if (piecesAction && method === 'POST') {
+    requireModule(user, 'shopfloor')
+    const order = db.get('productionOrders', piecesAction[1])
+    if (!order) throw new HttpError(404, 'Ordem de producao nao encontrada.')
+    const body = await readJson(req)
+    shopfloorOperator(req, user) // identificação do operador ainda válida
+    // etiquetas válidas: as unidades das peças dos planos da ordem (ou do projeto, sem vínculo)
+    const planIds = order.cutPlanIds?.length ? order.cutPlanIds : db.col('cutPlans').filter((p) => order.projectId && p.projectId === order.projectId).map((p) => p.id)
+    const units = new Set()
+    for (const planId of planIds)
+      for (const piece of db.get('cutPlans', planId)?.pieces ?? []) for (let n = 1; n <= (Number(piece.quantity) || 0); n++) units.add(unitKey(planId, piece.id, n))
+    const opId = decodeURIComponent(piecesAction[2])
+    const result = markPieces(order, opId, { keys: body.keys, done: body.done !== false, units })
+    const updated = db.update('productionOrders', order.id, { operations: result.operations })
+    return send(res, 200, { productionOrder: updated, done: result.done, total: result.total })
   }
 
   // ---- chão de fábrica: apontamento por etapa (relógio do servidor) ----

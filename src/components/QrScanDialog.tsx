@@ -50,6 +50,7 @@ export function QrScanDialog({ open, onClose, onResult }: { open: boolean; onClo
     let stream: MediaStream | null = null
     let timer = 0
     let stopped = false
+    let last = { text: '', at: 0 }
     const run = async () => {
       if (!navigator.mediaDevices?.getUserMedia) return setCameraError('Este aparelho não libera a câmera para o navegador. Use o campo abaixo.')
       try {
@@ -65,9 +66,12 @@ export function QrScanDialog({ open, onClose, onResult }: { open: boolean; onClo
         if (stopped || !video.current || !canvas.current) return
         const text = await read(video.current, canvas.current).catch(() => null)
         if (stopped) return
-        if (text) {
+        // segue lendo (várias etiquetas em sequência); a mesma etiqueta parada na frente da câmera não repete
+        if (text && (text !== last.text || Date.now() - last.at > 4000)) {
+          last = { text, at: Date.now() }
           if (navigator.vibrate) navigator.vibrate(80)
           resultRef.current(text)
+          timer = window.setTimeout(tick, 1200)
           return
         }
         timer = window.setTimeout(tick, 250)

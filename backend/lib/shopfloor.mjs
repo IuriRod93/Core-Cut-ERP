@@ -126,3 +126,25 @@ export function forgottenTimers(orders, { shiftEnd, maxRunHours, timeZone = 'Ame
   }
   return out
 }
+
+/** Chave de uma etiqueta (uma por unidade de peça): plano, peça e número da unidade. */
+export const unitKey = (planId, pieceId, n) => `${planId}:${pieceId}:${n}`
+
+/**
+ * Marca (ou desmarca) etiquetas como feitas numa etapa: o roteiro avança aos poucos, peça por peça.
+ * `units` é o mapa chave → true das etiquetas válidas dos planos da ordem.
+ */
+export function markPieces(order, opId, { keys, done = true, units, now = Date.now() }) {
+  if (!ACTIVE_ORDER.includes(order.status)) throw new HttpError(409, 'A ordem precisa estar liberada ou em produção para receber apontamentos.')
+  const op = (order.operations ?? []).find((item) => item.id === opId)
+  if (!op) throw new HttpError(404, 'Etapa não encontrada nesta ordem.')
+  if (op.status === 'concluida') throw new HttpError(409, 'Esta etapa já foi concluída.')
+  if (!op.startedAt) throw new HttpError(409, 'Inicie a etapa antes de marcar as peças.')
+  if (!Array.isArray(keys) || keys.length === 0 || keys.length > 5000) throw new HttpError(400, 'Informe as etiquetas (até 5000 por vez).')
+  const invalid = keys.find((key) => typeof key !== 'string' || !units.has(key))
+  if (invalid !== undefined) throw new HttpError(400, 'Etiqueta não pertence aos planos de corte desta ordem.')
+  const set = new Set(op.piecesDone ?? [])
+  for (const key of keys) done ? set.add(key) : set.delete(key)
+  const operations = order.operations.map((item) => (item.id === op.id ? { ...item, piecesDone: [...set], piecesAt: new Date(now).toISOString() } : item))
+  return { operations, done: set.size, total: units.size }
+}
