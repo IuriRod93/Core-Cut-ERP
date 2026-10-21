@@ -6,7 +6,8 @@ import { ArticleIcon, BadgeIcon, CheckCircleIcon, PauseIcon, PlayArrowIcon, Prec
 import { QrScanDialog } from '../components/QrScanDialog'
 import { StepDetailsDialog } from '../components/StepDetailsDialog'
 import { LabelsDialog } from '../components/LabelsDialog'
-import { loadPlan, unitKey } from '../lib/planUnits'
+import { loadPlan, unitKey, unitsOf } from '../lib/planUnits'
+import { buildProductionReportPdf } from '../domain/productionReportPdf'
 import { resolveScan } from '../domain/shopfloor'
 import { PAUSE_REASONS, type PauseReason } from '../../shared/shopfloor.mjs'
 import { Dot, EmptyState, LoadingState, PageHeader, ProgressLine } from '../components/ui'
@@ -14,12 +15,12 @@ import { orderProgress } from '../components/ProductionTimeline'
 import { NumberField } from '../components/forms'
 import { useToast } from '../components/feedback'
 import { useAuth } from '../auth/AuthContext'
-import { createDoc, getCollectionSnapshot, patchLocal, refreshCollection, useCollections } from '../lib/store'
+import { createDoc, getCollectionSnapshot, patchLocal, refreshCollection, useCollections, useCompany } from '../lib/store'
 import { actionPath, enqueue, flushQueue, onQueueChange, queued } from '../lib/shopfloorQueue'
 import { applyOperationAction, runningOperationsOf } from '../../backend/lib/shopfloor.mjs'
 import { ApiError, api } from '../lib/api'
 import { OP_STATUS, PROJECT_PRIORITIES, optColor, optLabel } from '../domain/constants'
-import { daysUntil, fmtClock, fmtDate, fmtDuration, todayISO } from '../lib/format'
+import { daysUntil, downloadBlob, fmtClock, fmtDate, fmtDuration, todayISO } from '../lib/format'
 import { colors } from '../theme'
 import type { OpOperation, ProductionOrder } from '../types'
 
@@ -49,12 +50,13 @@ const saveOperator = (op: Operator | null) => {
 }
 
 export function ShopFloorPage() {
-  const { user } = useAuth()
+  const { user, can } = useAuth()
+  const company = useCompany()
   const toast = useToast()
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const projectFilter = params.get('projeto') ?? ''
-  const { data, maps, loading } = useCollections(['productionOrders', 'workCenters', 'projects', 'cutPlans'] as const)
+  const { data, maps, loading } = useCollections(['productionOrders', 'workCenters', 'projects', 'cutPlans', 'clients', 'qualityRecords', 'qualityInspections'] as const)
   const [centerId, setCenterId] = useState<string>(() => {
     try {
       return localStorage.getItem('arcoplan.shopfloor.center') ?? ''
@@ -131,10 +133,20 @@ export function ShopFloorPage() {
   }
 
   // projetos que têm produção em andamento (para escolher no seletor)
-  const projectsInProduction = useMemo(() => {
-    const ids = new Set(data.productionOrders.filter((o) => ['liberada', 'em_producao'].includes(o.status) && o.projectId).map((o) => o.projectId as string))
-    return data.projects.filter((p) => ids.has(p.id)).sort((a, b) => a.name.localeCompare(b.name))
-  }, [data.productionOrders, data.projects])
+  // projetos com plano de corte gerado ou com ordem de produção, e em que pé cada um está
+  const projectOptions = useMemo(() => {
+    const RANK: Record<string, number> = { em_producao: 0, liberada: 1, qualidade: 2, planejada: 3, sem_ordem: 4, concluida: 5 }
+    const LABEL: Record<string, string> = { em_producao: 'em produção', liberada: 'liberada', qualidade: 'na qualidade', planejada: 'ordem planejada', sem_ordem: 'sem ordem de produção', concluida: 'concluída' }
+    const withPlans = new Set(data.cutPlans.map((p) => p.projectId).filter(Boolean) as string[])
+    const out: { project: (typeof data.projects)[number]; state: string; label: string; plans: number }[] = []
+    for (const project of data.projects) {
+      const orders = data.productionOrders.filter((o) => o.projectId === project.id && o.status !== 'cancelada')
+      if (!orders.length && !withPlans.has(project.id)) continue
+      const state = orders.length ? orders.map((o) => o.status).sort((a, b) => (RANK[a] ?? 9) - (RANK[b] ?? 9))[0] : 'sem_ordem'
+      out.push({ project, state, label: LABEL[state] ?? state, plans: data.cutPlans.filter((p) => p.projectId === project.id).length })
+    }
+    return out.sort((a, b) => (RANK[a.state] ?? 9) - (RANK[b.state] ?? 9) || a.project.name.localeCompare(b.project.name))
+  }, [data.productionOrders, data.projects, data.cutPlans])
   const setProject = (id: string) => {
     if (id) params.set('projeto', id)
     else {
@@ -287,6 +299,79 @@ export function ShopFloorPage() {
     setIssueText('')
   }
 
+  // ---- projeto escolhido: liberar/criar a ordem e o relatório técnico
+  const [projectBusy, setProjectBusy] = useState(false)
+  const projectPlanIds = data.cutPlans.filter((p) => projectFilter && p.projectId === projectFilter).map((p) => p.id)
+
+  const releaseOrder = async (order: ProductionOrder) => {
+    setProjectBusy(true)
+    try {
+      // a ordem leva os planos de corte do projeto (etiquetas e peças no chão de fábrica)
+      if (!order.cutPlanIds?.length && projectPlanIds.length) await api.put(`/data/productionOrders/${order.id}`, { cutPlanIds: projectPlanIds })
+      await api.post(`/production-orders/${order.id}/release`)
+      await refreshCollection('productionOrders')
+      toast.success(`${order.code} liberada: as etapas já aparecem nos setores.`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível liberar a ordem.')
+    } finally {
+      setProjectBusy(false)
+    }
+  }
+
+  const createOrder = async () => {
+    const project = data.projects.find((p) => p.id === projectFilter)
+    if (!project) return
+    if (!centers.length) return toast.error('Cadastre os setores em Configurações → Setores e máquinas antes de criar a ordem.')
+    setProjectBusy(true)
+    try {
+      await createDoc('productionOrders', {
+        title: `Produção — ${project.name}`,
+        projectId: project.id,
+        clientId: project.clientId,
+        status: 'planejada',
+        priority: project.priority ?? 'media',
+        startDate: todayISO(),
+        dueDate: project.dueDate,
+        items: [],
+        operations: centers.map((center, index) => ({ id: crypto.randomUUID(), workCenterId: center.id, name: center.name, order: index + 1, plannedMinutes: 0, actualSeconds: 0, status: 'pendente' as const, quantityDone: 0 })),
+        materialsPosted: false,
+        cutPlanIds: projectPlanIds,
+        notes: 'Ordem criada pelo Chão de fábrica a partir dos planos de corte do projeto.',
+      })
+      toast.success('Ordem de produção criada. Libere para as etapas aparecerem nos setores.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível criar a ordem.')
+    } finally {
+      setProjectBusy(false)
+    }
+  }
+
+  const exportReport = async () => {
+    const project = data.projects.find((p) => p.id === projectFilter)
+    if (!project) return
+    setProjectBusy(true)
+    try {
+      const orders = projectOrders
+      const unitsByOrder = new Map<string, ReturnType<typeof unitsOf>>()
+      for (const order of orders) unitsByOrder.set(order.id, unitsOf(await Promise.all(planIdsOf(order).map(loadPlan))))
+      const blob = await buildProductionReportPdf({
+        company,
+        project,
+        client: data.clients.find((c) => c.id === project.clientId),
+        orders,
+        workCenters: maps.workCenters,
+        unitsOf: (order) => unitsByOrder.get(order.id) ?? [],
+        quality: data.qualityRecords.filter((q) => q.projectId === project.id || orders.some((o) => o.id === q.productionOrderId)),
+        inspections: data.qualityInspections.filter((i) => orders.some((o) => o.id === i.productionOrderId)),
+      })
+      downloadBlob(blob, `relatorio-producao-${(project.code ?? project.name).toLowerCase().replace(/[^a-z0-9]+/g, '-')}.pdf`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível gerar o relatório.')
+    } finally {
+      setProjectBusy(false)
+    }
+  }
+
   /** Total de etiquetas da ordem (pelo resumo dos planos, sem baixar as peças). */
   const unitsTotal = (order: ProductionOrder) => planIdsOf(order).reduce((sum, id) => sum + (data.cutPlans.find((p) => p.id === id)?.pieceCount ?? 0), 0)
 
@@ -437,10 +522,14 @@ export function ShopFloorPage() {
                 Todos os projetos (por setor)
               </Box>
             </MenuItem>
-            {projectsInProduction.map((p) => (
+            {projectOptions.map(({ project: p, label, plans }) => (
               <MenuItem key={p.id} value={p.id}>
                 {p.code ? `${p.code} · ` : ''}
                 {p.name}
+                <Box component="span" sx={{ color: 'text.secondary', ml: 1, fontSize: '0.85em' }}>
+                  · {label}
+                  {plans ? ` · ${plans} plano${plans > 1 ? 's' : ''} de corte` : ''}
+                </Box>
               </MenuItem>
             ))}
           </TextField>
@@ -458,6 +547,9 @@ export function ShopFloorPage() {
                 onClick={() => setLabels({ orderIds: projectOrders.filter((o) => ['liberada', 'em_producao'].includes(o.status)).map((o) => o.id), title: `Etiquetas — ${data.projects.find((p) => p.id === projectFilter)?.name ?? 'projeto'}` })}
               >
                 Etiquetas do projeto
+              </Button>
+              <Button size="small" variant="outlined" startIcon={<ArticleIcon />} disabled={projectBusy || !projectOrders.length} onClick={() => void exportReport()}>
+                Relatório técnico (PDF)
               </Button>
               <Button size="small" onClick={() => navigate(`/projetos/${projectFilter}`)}>
                 Abrir projeto
@@ -480,9 +572,34 @@ export function ShopFloorPage() {
                   {o.code} · {o.title} · {optLabel(OP_STATUS, o.status)}
                 </Typography>
                 <ProgressLine value={orderProgress(o)} label={`${o.operations.filter((x) => x.status === 'concluida').length}/${o.operations.length} etapas`} />
+                {o.status === 'planejada' ? (
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.75, flexWrap: 'wrap', rowGap: 0.5 }}>
+                    <Typography variant="body2" sx={{ color: colors.warning, fontWeight: 600 }}>
+                      Ordem planejada: libere para as etapas aparecerem nos setores.
+                    </Typography>
+                    {can('production') ? (
+                      <Button size="small" variant="contained" disabled={projectBusy || !o.operations.length} onClick={() => void releaseOrder(o)}>
+                        Liberar para produção
+                      </Button>
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">
+                        Peça ao PCP para liberar.
+                      </Typography>
+                    )}
+                  </Stack>
+                ) : null}
               </Box>
             ))}
           </Box>
+        ) : projectFilter ? (
+          <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
+            <Typography variant="body2" sx={{ color: colors.warning, fontWeight: 600 }}>
+              Este projeto tem {projectPlanIds.length} plano(s) de corte, mas ainda não tem ordem de produção.
+            </Typography>
+            <Button size="small" variant="contained" disabled={projectBusy} onClick={() => void createOrder()}>
+              Criar ordem de produção
+            </Button>
+          </Stack>
         ) : null}
       </Paper>
 

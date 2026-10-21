@@ -462,3 +462,6 @@ export async function buildContractPdf(contract: Contract, client: Client | unde
   sheet.y += 24
   return sheet.blob()
 }
+
+// layout compartilhado com outros documentos (relatório técnico de produção)
+export { Sheet, signatures, M, CW, PAGE_W, INK, MUTED, LINE, SOFT }
