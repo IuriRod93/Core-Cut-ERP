@@ -20,12 +20,13 @@ import {
   Typography,
 } from '@mui/material'
 import { Stack } from '../components/Stack'
-import { AccountBalanceIcon, AddIcon, CheckCircleIcon, PaidIcon, TrendingDownIcon, TrendingUpIcon, WarningAmberIcon } from '../components/icons'
+import { AccountBalanceIcon, AddIcon, CheckCircleIcon, PaidIcon, TrendingDownIcon, TrendingUpIcon, WarningAmberIcon, WhatsAppIcon } from '../components/icons'
 import { DataTable, EmptyState, LoadingState, PageHeader, Panel, SearchField, StatCard, StatusChip, type Column } from '../components/ui'
 import { FormDialog, type FieldDef } from '../components/forms'
 import { CrudPage, type CrudConfig } from '../components/CrudPage'
 import { useConfirm, useToast } from '../components/feedback'
-import { createDoc, removeDoc, updateDoc, useCollections } from '../lib/store'
+import { createDoc, removeDoc, updateDoc, useCollections, useCompany } from '../lib/store'
+import { chargeMessage, waPhone, whatsappUrl } from '../domain/collection'
 import { EXPENSE_CATEGORIES, FINANCE_STATUS, INCOME_CATEGORIES, PAYMENT_METHODS, optLabel } from '../domain/constants'
 import { brl, brlShort, daysUntil, fmtDate, isoDay, matches, todayISO, toDate } from '../lib/format'
 import { chartPalette, colors } from '../theme'
@@ -183,6 +184,7 @@ function Overview() {
 // ----------------------------------------------------- receber / pagar
 function Entries({ kind }: { kind: 'receivables' | 'payables' }) {
   const toast = useToast()
+  const company = useCompany()
   const confirm = useConfirm()
   const isRecv = kind === 'receivables'
   const { data, maps, loading, recv, pay } = useFinance()
@@ -239,15 +241,38 @@ function Entries({ kind }: { kind: 'receivables' | 'payables' }) {
       key: 'actions',
       header: '',
       align: 'right',
-      width: 56,
-      render: (r) =>
-        r.status === 'pendente' ? (
-          <Tooltip title={isRecv ? 'Registrar recebimento' : 'Registrar pagamento'}>
-            <IconButton size="small" onClick={(e) => { e.stopPropagation(); setPaying(r) }} sx={{ color: colors.success }} aria-label="Baixar">
-              <CheckCircleIcon />
-            </IconButton>
-          </Tooltip>
-        ) : null,
+      width: 96,
+      render: (r) => {
+        if (r.status !== 'pendente') return null
+        // cobrança pelo WhatsApp do cliente, com a mensagem pronta
+        const client = isRecv ? maps.clients.get((r as Receivable).clientId ?? '') : undefined
+        const phone = waPhone(client?.phone)
+        return (
+          <Stack direction="row" spacing={0.25} justifyContent="flex-end">
+            {isRecv && phone ? (
+              <Tooltip title={`Cobrar ${client?.name ?? 'cliente'} pelo WhatsApp`}>
+                <IconButton
+                  size="small"
+                  component="a"
+                  href={whatsappUrl(phone, chargeMessage({ contactName: client?.contactName || client?.name, description: r.description, amount: r.amount, dueDate: r.dueDate, overdue: r._status === 'atrasado', companyName: company.name }))}
+                  target="_blank"
+                  rel="noopener"
+                  onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                  sx={{ color: '#25a244' }}
+                  aria-label="Cobrar pelo WhatsApp"
+                >
+                  <WhatsAppIcon />
+                </IconButton>
+              </Tooltip>
+            ) : null}
+            <Tooltip title={isRecv ? 'Registrar recebimento' : 'Registrar pagamento'}>
+              <IconButton size="small" onClick={(e) => { e.stopPropagation(); setPaying(r) }} sx={{ color: colors.success }} aria-label="Baixar">
+                <CheckCircleIcon />
+              </IconButton>
+            </Tooltip>
+          </Stack>
+        )
+      },
     },
   ]
 

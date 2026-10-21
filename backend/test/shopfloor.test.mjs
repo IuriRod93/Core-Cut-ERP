@@ -467,3 +467,18 @@ test('estoque pelo plano de corte: reserva as chapas do plano, baixa ao concluir
   assert.equal(purchase.status, 201, JSON.stringify(purchase.json))
   assert.deepEqual(purchase.json.shortages.map((s) => [s.materialId, s.quantity]), [[mdf.id, 1]])
 })
+
+test('financeiro: o agendador avisa quem tem o módulo financeiro sobre a parcela que vence em 3 dias', async () => {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date())
+  const due = new Date(`${today}T12:00:00Z`)
+  due.setUTCDate(due.getUTCDate() + 3)
+  const r = await call('POST', '/data/receivables', { body: { description: 'Parcela aviso', amount: 750, dueDate: due.toISOString().slice(0, 10), status: 'pendente', category: 'Teste' } })
+  assert.equal(r.status, 201, JSON.stringify(r.json))
+  const run = await call('POST', '/admin/scheduler/run', { body: {} })
+  assert.ok(run.json.financeReminders >= 1, JSON.stringify(run.json))
+  const notes = (await call('GET', '/notifications')).json.items
+  assert.ok(notes.some((n) => n.title === 'Recebimento vence em 3 dias' && /Parcela aviso/.test(n.body) && n.path === '/financeiro'))
+  // rodar de novo no mesmo dia não repete o aviso
+  const again = await call('POST', '/admin/scheduler/run', { body: {} })
+  assert.equal(again.json.financeReminders, 0)
+})

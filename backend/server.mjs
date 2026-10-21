@@ -20,6 +20,7 @@ import { createMailer } from './lib/mailer.mjs'
 import { createGeo, distanceMeters, isLat, isLng } from './lib/geo.mjs'
 import { createProductionTasks } from './lib/production-tasks.mjs'
 import { syncPlanOffcuts } from './lib/offcuts.mjs'
+import { dueReminders, groupReminders } from './lib/finance-reminders.mjs'
 import { applyOperationAction, forgottenTimers, markPieces, runningOperationsOf, unitKey } from './lib/shopfloor.mjs'
 import { createPortal, newPortalToken, validPortalToken } from './lib/portal.mjs'
 import { buildFocusPayload, companyProblems, createFocusClient, createSecretBox, invoiceProblems, mapFocusResponse, totalsOf } from './lib/fiscal.mjs'
@@ -687,13 +688,33 @@ async function runSchedulerOnce(now = new Date()) {
   }
   // Cada empresa roda no próprio contexto, para que os registros criados fiquem nela.
   const tenants = [null, ...db.all('companies').filter((company) => companyAccess(company, now.getTime()).allowed).map((company) => company.id)]
-  const total = { notified: 0, automationsRun: 0, tasksTouched: 0, autoPaused: 0 }
+  const total = { notified: 0, automationsRun: 0, tasksTouched: 0, autoPaused: 0, financeReminders: 0 }
   for (const tenantId of tenants) {
     const summary = db.runAsTenant(tenantId, () => runScheduler(db, { now, automations }))
     for (const key of Object.keys(summary)) total[key] = (total[key] ?? 0) + (summary[key] ?? 0)
     total.autoPaused += db.runAsTenant(tenantId, () => autoPauseForgotten(now))
+    total.financeReminders += db.runAsTenant(tenantId, () => notifyFinanceDue(now))
   }
   return total
+}
+
+/** Financeiro: avisa vencimentos de contas a receber e a pagar (antes, no dia e em atraso). */
+function notifyFinanceDue(now) {
+  const settings = db.get('settings', 'company') ?? {}
+  // "hoje" no fuso da empresa (o servidor roda em UTC)
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: settings.timeZone || 'America/Sao_Paulo' }).format(now)
+  const recipients = db.col('users').filter((u) => u.active !== false && userModules(u).includes('financial'))
+  if (!recipients.length) return 0
+  const clientName = (entry) => (entry.clientId ? db.get('clients', entry.clientId)?.name : '') ?? ''
+  const supplierName = (entry) => (entry.supplierId ? db.get('suppliers', entry.supplierId)?.name : '') ?? ''
+  const reminders = [
+    ...groupReminders(dueReminders(db.col('receivables'), today, 'receivable', clientName), 'receivable', today),
+    ...groupReminders(dueReminders(db.col('payables'), today, 'payable', supplierName), 'payable', today),
+  ]
+  let sent = 0
+  for (const r of reminders)
+    for (const user of recipients) if (notify(db, { userId: user.id, kind: r.overdue ? 'overdue' : 'due', title: r.title, body: r.body, path: '/financeiro', key: r.key, createdAt: now.toISOString() })) sent += 1
+  return sent
 }
 
 /** Chão de fábrica: pausa as etapas esquecidas rodando (fim do expediente ou horas demais seguidas). */
