@@ -400,3 +400,55 @@ test('operador da equipe do projeto entra com um toque; fora da equipe precisa d
   assert.equal(ok.json.operator.name, 'Carlos Montador')
   assert.equal((await call('POST', '/shopfloor/operator', { body: { userId: outsider.id } })).status, 403)
 })
+
+test('estoque pelo plano de corte: reserva as chapas do plano, baixa ao concluir o corte e aponta a falta', async () => {
+  const mdf = (await call('POST', '/data/materials', { body: { name: 'MDF Branco 18 mm (teste plano)', category: 'chapa', unit: 'chapa', cost: 300, stock: 5, sheetWidth: 2750, sheetHeight: 1850, active: true } })).json
+  const fita = (await call('POST', '/data/materials', { body: { name: 'Fita branca 22 mm (teste plano)', category: 'fita_borda', unit: 'm', cost: 1, stock: 100, active: true } })).json
+  const sheet = { index: 1, placements: [] }
+  const plan = (await call('POST', '/data/cutPlans', {
+    body: {
+      title: 'Plano estoque',
+      status: 'aprovado',
+      edgeMaterialId: fita.id,
+      // 1 m de lateral com fita nos 2 lados compridos = 2 m por unidade × 4 unidades = 8 m (+10% = 9)
+      pieces: [{ id: 'lat', label: 'Lateral', length: 1000, width: 500, quantity: 4, rotate: false, edgeTop: true, edgeBottom: true }],
+      groups: [
+        { key: 'mdf', materialId: mdf.id, materialName: mdf.name, thickness: 18, sheetWidth: 2750, sheetHeight: 1850, sheetCost: 300, sheets: [sheet, sheet, sheet], unplaced: [], utilization: 80, cost: 900 },
+        { key: 'retalho', materialId: mdf.id, materialName: 'retalho', thickness: 18, sheetWidth: 800, sheetHeight: 600, sheetCost: 0, sheets: [sheet], unplaced: [], utilization: 50, cost: 0, offcutId: 'ret-1' },
+      ],
+      hardware: [],
+    },
+  })).json
+  const ops = ['Corte (seccionadora)', 'Montagem'].map((name, i) => ({ id: `st-${i}`, workCenterId: `wc-${i}`, name, order: i + 1, plannedMinutes: 10, actualSeconds: 0, status: 'pendente', runningSince: null, quantityDone: 0 }))
+  // operador próprio (equipe do projeto), para não esbarrar em etapas abertas de outros testes
+  const cutter = (await call('POST', '/data/users', { body: { name: 'Beto Corte', email: 'beto@fabrica.test', role: 'producao', password: 'Fabrica-Forte-9' } })).json
+  const project = (await call('POST', '/data/projects', { body: { name: 'Projeto estoque', status: 'producao', memberIds: [cutter.id] } })).json
+  const order = (await call('POST', '/data/productionOrders', { body: { title: 'Estoque', projectId: project.id, status: 'planejada', priority: 'media', items: [], operations: ops, cutPlanIds: [plan.id] } })).json
+  const ticket = (await call('POST', '/shopfloor/operator', { body: { userId: cutter.id, projectId: project.id } })).json.ticket
+  const asCutter = { headers: { 'X-Operator': ticket } }
+
+  const released = await call('POST', `/production-orders/${order.id}/release`)
+  assert.equal(released.status, 200, JSON.stringify(released.json))
+  const qty = (id) => released.json.reservations.find((r) => r.materialId === id)?.quantity
+  assert.equal(qty(mdf.id), 3) // 3 chapas novas; o retalho não conta
+  assert.equal(qty(fita.id), 9)
+
+  // o corte termina: as chapas e a fita saem do estoque sozinhas
+  const startCut = await call('POST', `/production-orders/${order.id}/operations/st-0/start`, asCutter)
+  assert.equal(startCut.status, 200, JSON.stringify(startCut.json))
+  const cut = await call('POST', `/production-orders/${order.id}/operations/st-0/finish`, { body: {}, ...asCutter })
+  assert.equal(cut.status, 200, JSON.stringify(cut.json))
+  assert.equal(cut.json.consumed, true)
+  assert.equal(cut.json.productionOrder.materialsPosted, true)
+  assert.equal((await call('GET', `/data/materials/${mdf.id}`)).json.stock, 2)
+  assert.equal((await call('GET', `/data/materials/${fita.id}`)).json.stock, 91)
+
+  // outra ordem do mesmo plano precisa de 3 chapas, mas só restam 2: a liberação recusa e a compra traz a falta
+  const second = (await call('POST', '/data/productionOrders', { body: { title: 'Estoque 2', status: 'planejada', priority: 'media', items: [], operations: ops, cutPlanIds: [plan.id] } })).json
+  const refused = await call('POST', `/production-orders/${second.id}/release`)
+  assert.equal(refused.status, 409)
+  assert.match(refused.json.error, /insuficiente/i)
+  const purchase = await call('POST', `/production-orders/${second.id}/purchase`, { body: {} })
+  assert.equal(purchase.status, 201, JSON.stringify(purchase.json))
+  assert.deepEqual(purchase.json.shortages.map((s) => [s.materialId, s.quantity]), [[mdf.id, 1]])
+})

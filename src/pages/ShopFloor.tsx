@@ -13,7 +13,7 @@ import { PAUSE_REASONS, type PauseReason } from '../../shared/shopfloor.mjs'
 import { Dot, EmptyState, LoadingState, PageHeader, ProgressLine, UserAvatar } from '../components/ui'
 import { orderProgress } from '../components/ProductionTimeline'
 import { NumberField } from '../components/forms'
-import { useToast } from '../components/feedback'
+import { useConfirm, useToast } from '../components/feedback'
 import { useAuth } from '../auth/AuthContext'
 import { createDoc, getCollectionSnapshot, patchLocal, refreshCollection, useCollections, useCompany } from '../lib/store'
 import { actionPath, enqueue, flushQueue, onQueueChange, queued } from '../lib/shopfloorQueue'
@@ -53,6 +53,7 @@ export function ShopFloorPage() {
   const { user, can } = useAuth()
   const company = useCompany()
   const toast = useToast()
+  const confirm = useConfirm()
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const projectFilter = params.get('projeto') ?? ''
@@ -237,7 +238,7 @@ export function ShopFloorPage() {
     }
     setSending(true)
     try {
-      const res = await api.post<{ inspection: unknown }>(actionPath(order.id, op.id, action), body, operator ? { 'X-Operator': operator.ticket } : undefined)
+      const res = await api.post<{ inspection: unknown; consumed?: boolean; consumeError?: string | null }>(actionPath(order.id, op.id, action), body, operator ? { 'X-Operator': operator.ticket } : undefined)
       await refreshCollection('productionOrders')
       return res
     } catch (error) {
@@ -270,7 +271,8 @@ export function ShopFloorPage() {
     if (!finish) return
     const res = await act(finish.order, finish.op, 'finish', { quantity: qty })
     if (!res) return
-    toast.success(res.inspection ? 'Etapa concluída. Roteiro completo: a ordem foi para a inspeção de qualidade.' : 'Etapa concluída.')
+    toast.success(res.inspection ? 'Etapa concluída. Roteiro completo: a ordem foi para a inspeção de qualidade.' : 'consumed' in res && res.consumed ? 'Corte concluído: as chapas do plano saíram do estoque.' : 'Etapa concluída.')
+    if ('consumeError' in res && res.consumeError) toast.warning(`Etapa concluída, mas o estoque não foi baixado: ${res.consumeError} Ajuste em Estoque ou em Ordens de produção.`)
     setFinish(null)
     setQty(null)
   }
@@ -310,9 +312,21 @@ export function ShopFloorPage() {
       if (!order.cutPlanIds?.length && projectPlanIds.length) await api.put(`/data/productionOrders/${order.id}`, { cutPlanIds: projectPlanIds })
       await api.post(`/production-orders/${order.id}/release`)
       await refreshCollection('productionOrders')
-      toast.success(`${order.code} liberada: as etapas já aparecem nos setores.`)
+      toast.success(`${order.code} liberada: as chapas do plano de corte foram reservadas e as etapas já aparecem nos setores.`)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Não foi possível liberar a ordem.')
+      const message = error instanceof Error ? error.message : 'Não foi possível liberar a ordem.'
+      // falta material: oferece gerar a solicitação de compra do que falta
+      if (/insuficiente/i.test(message) && can('purchases')) {
+        const ok = await confirm({ title: 'Falta material para liberar', message: `${message} Gerar a solicitação de compra do que falta para esta ordem?`, confirmLabel: 'Gerar solicitação de compra' })
+        if (ok) {
+          try {
+            const res = await api.post<{ purchase: { code?: string }; existing: boolean }>(`/production-orders/${order.id}/purchase`, {})
+            toast.success(res.existing ? `Já existe a solicitação ${res.purchase.code ?? ''} para esta ordem.` : `Solicitação de compra ${res.purchase.code ?? ''} criada em Compras.`)
+          } catch (purchaseError) {
+            toast.error(purchaseError instanceof Error ? purchaseError.message : 'Não foi possível gerar a compra.')
+          }
+        }
+      } else toast.error(message)
     } finally {
       setProjectBusy(false)
     }

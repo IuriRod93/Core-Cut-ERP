@@ -221,14 +221,55 @@ const budgetTotal = (budget) => {
 
 const PRODUCTION_YIELD = 0.82
 
+/** Planos de corte da ordem: os vinculados; sem vínculo, os do projeto (só os que já foram calculados). */
+function orderCutPlans(order) {
+  const ids = order.cutPlanIds?.length ? order.cutPlanIds : db.col('cutPlans').filter((plan) => order.projectId && plan.projectId === order.projectId).map((plan) => plan.id)
+  return ids.map((id) => db.get('cutPlans', id)).filter((plan) => plan && (plan.groups ?? []).some((group) => (group.sheets ?? []).length))
+}
+
+/** Metros de fita de uma peça (bordas marcadas + trechos de contorno), por unidade. */
+const pieceEdgeMeters = (piece) =>
+  (((piece.edgeTop ? 1 : 0) + (piece.edgeBottom ? 1 : 0)) * Number(piece.length || 0) + ((piece.edgeLeft ? 1 : 0) + (piece.edgeRight ? 1 : 0)) * Number(piece.width || 0) + Number(piece.edgeExtra || 0)) / 1000
+
+/**
+ * Materiais da ordem. Com plano de corte calculado, chapas, fita e ferragens vêm DELE (contagem exata do
+ * corte, retalhos não contam como chapa nova); sem plano, estimativa pelas fichas técnicas dos itens.
+ */
 function productionMaterialNeeds(order) {
   const areaBy = new Map()
   const edgeBy = new Map()
   const hardwareBy = new Map()
+  const sheetsBy = new Map()
+  const plans = orderCutPlans(order)
+  for (const plan of plans) {
+    for (const group of plan.groups ?? []) {
+      if (group.offcutId || !group.materialId || !(group.sheets ?? []).length) continue
+      const cur = sheetsBy.get(group.materialId) ?? { sheets: 0, area: 0 }
+      cur.sheets += group.sheets.length
+      cur.area += (group.sheets.length * Number(group.sheetWidth || 0) * Number(group.sheetHeight || 0)) / 1_000_000
+      sheetsBy.set(group.materialId, cur)
+    }
+    if (plan.edgeMaterialId) {
+      const meters = (plan.pieces ?? []).reduce((sum, piece) => sum + pieceEdgeMeters(piece) * (Number(piece.quantity) || 0), 0)
+      if (meters > 0) edgeBy.set(plan.edgeMaterialId, (edgeBy.get(plan.edgeMaterialId) ?? 0) + meters)
+    }
+    for (const hardware of plan.hardware ?? []) {
+      if (!hardware.materialId) continue
+      hardwareBy.set(hardware.materialId, (hardwareBy.get(hardware.materialId) ?? 0) + (Number(hardware.quantity) || 0))
+    }
+  }
   for (const item of order.items ?? []) {
     const bom = item.bomId ? db.get('boms', item.bomId) : null
     if (!bom) continue
     const itemQuantity = Number(item.quantity) || 0
+    // o plano de corte já conta chapas e fita: da ficha técnica só entram as ferragens
+    if (plans.length) {
+      for (const hardware of bom.hardware ?? []) {
+        if (!hardware.materialId) continue
+        hardwareBy.set(hardware.materialId, (hardwareBy.get(hardware.materialId) ?? 0) + (Number(hardware.quantity) || 0) * itemQuantity)
+      }
+      continue
+    }
     for (const part of bom.parts ?? []) {
       if (!part.materialId) continue
       const area = (Number(part.length) * Number(part.width) * Number(part.quantity)) / 1_000_000 * itemQuantity
@@ -251,6 +292,12 @@ function productionMaterialNeeds(order) {
   }
 
   const needs = []
+  for (const [materialId, { sheets, area }] of sheetsBy) {
+    const material = db.get('materials', materialId)
+    // cadastro em chapas: o número de chapas do plano; cadastro por área: os m² dessas chapas
+    const bySheet = material?.sheetWidth && material?.sheetHeight
+    needs.push({ materialId, material, quantity: bySheet ? sheets : round2(area), kind: 'chapa', source: 'plano' })
+  }
   for (const [materialId, area] of areaBy) {
     const material = db.get('materials', materialId)
     const sheet = material?.sheetWidth && material?.sheetHeight ? (material.sheetWidth * material.sheetHeight) / 1_000_000 : 0
@@ -258,7 +305,7 @@ function productionMaterialNeeds(order) {
   }
   for (const [materialId, meters] of edgeBy) {
     const material = db.get('materials', materialId)
-    needs.push({ materialId, material, quantity: Math.ceil(meters * 1.1), kind: 'fita' })
+    needs.push({ materialId, material, quantity: Math.ceil(meters * 1.1), kind: 'fita', ...(plans.length ? { source: 'plano' } : {}) })
   }
   for (const [materialId, quantity] of hardwareBy) {
     const material = db.get('materials', materialId)
@@ -294,6 +341,30 @@ function shopfloorOperator(req, user) {
   const operator = ticket && ticket.sessionUserId === user.id ? db.get('users', ticket.userId) : null
   if (!operator || operator.active === false) throw new HttpError(409, 'A identificação do operador expirou. Informe o PIN de novo.')
   return operator
+}
+
+/** Dá baixa no estoque do que foi reservado para a ordem (uma única vez). */
+function consumeProductionMaterials(user, order, reason = `Consumo da ${order.code}`) {
+  const reservations = db.col('inventoryReservations').filter((reservation) => reservation.productionOrderId === order.id && reservation.status === 'reserved')
+  if (!reservations.length) throw new HttpError(409, 'Libere a ordem antes de consumir os materiais.')
+  for (const reservation of reservations) {
+    const material = db.get('materials', reservation.materialId)
+    if (!material || Number(reservation.quantity) > Number(material.stock ?? 0)) throw new HttpError(409, `Saldo insuficiente para consumir "${reservation.materialName}".`)
+  }
+  const consumedAt = new Date().toISOString()
+  for (const reservation of reservations) {
+    applyMovement(user, { materialId: reservation.materialId, type: 'exit', quantity: reservation.quantity, reason, productionOrderId: order.id, projectId: order.projectId })
+    db.update('inventoryReservations', reservation.id, { status: 'consumed', consumedAt, consumedBy: user.id, consumedByName: user.name })
+  }
+  const updated = db.update('productionOrders', order.id, { materialsPosted: true, reservationStatus: 'consumed' })
+  audit(user, 'consume', 'productionOrders', updated, { reservationIds: reservations.map((reservation) => reservation.id) })
+  return updated
+}
+
+/** A etapa de corte da ordem: a que tem corte/seccionadora/serra no nome; sem nenhuma, a primeira do roteiro. */
+const cutStepOf = (order) => {
+  const ops = [...(order.operations ?? [])].sort((a, b) => a.order - b.order)
+  return ops.find((op) => /corte|seccionadora|serra/i.test(op.name ?? '')) ?? ops[0]
 }
 
 /** Abre (ou reaproveita) a inspeção de qualidade pendente e coloca a ordem em "qualidade". */
@@ -1584,10 +1655,21 @@ async function handleAuthenticated(req, res, path, query, user, token) {
     if (result.unchanged) return send(res, 200, { productionOrder: order, inspection: null })
     let updated = db.update('productionOrders', order.id, { operations: result.operations, ...(result.status ? { status: result.status } : {}) })
     audit(user, `operation_${action}`, 'productionOrders', updated, { operationId: operationAction[2], operatorId: operator.id, operatorName: operator.name })
+    // corte concluído: as chapas saem do estoque (o que foi reservado na liberação)
+    let consumed = false
+    let consumeError = null
+    if (action === 'finish' && !updated.materialsPosted && cutStepOf(updated)?.id === decodeURIComponent(operationAction[2]) && db.col('inventoryReservations').some((r) => r.productionOrderId === updated.id && r.status === 'reserved')) {
+      try {
+        updated = consumeProductionMaterials(operator, updated, `Consumo do corte da ${updated.code}`)
+        consumed = true
+      } catch (error) {
+        consumeError = error?.message ?? 'Não foi possível dar baixa no estoque.'
+      }
+    }
     // roteiro completo: a ordem segue sozinha para a inspeção de qualidade
     let inspection = null
     if (result.finished) ({ productionOrder: updated, inspection } = startQualityInspection(user, updated))
-    return send(res, 200, { productionOrder: updated, inspection })
+    return send(res, 200, { productionOrder: updated, inspection, consumed, consumeError })
   }
 
   const qualityDecision = url.match(/^\/api\/production-orders\/([^/]+)\/quality\/(approve|reject)$/)
@@ -1663,19 +1745,7 @@ async function handleAuthenticated(req, res, path, query, user, token) {
     const order = db.get('productionOrders', consumeProduction[1])
     if (!order) throw new HttpError(404, 'Ordem de producao nao encontrada.')
     if (order.materialsPosted) return send(res, 200, { productionOrder: order, reservations: db.col('inventoryReservations').filter((reservation) => reservation.productionOrderId === order.id) })
-    const reservations = db.col('inventoryReservations').filter((reservation) => reservation.productionOrderId === order.id && reservation.status === 'reserved')
-    if (!reservations.length) throw new HttpError(409, 'Libere a ordem antes de consumir os materiais.')
-    for (const reservation of reservations) {
-      const material = db.get('materials', reservation.materialId)
-      if (!material || Number(reservation.quantity) > Number(material.stock ?? 0)) throw new HttpError(409, `Saldo insuficiente para consumir "${reservation.materialName}".`)
-    }
-    const consumedAt = new Date().toISOString()
-    for (const reservation of reservations) {
-      applyMovement(user, { materialId: reservation.materialId, type: 'exit', quantity: reservation.quantity, reason: `Consumo da ${order.code}`, productionOrderId: order.id, projectId: order.projectId })
-      db.update('inventoryReservations', reservation.id, { status: 'consumed', consumedAt, consumedBy: user.id, consumedByName: user.name })
-    }
-    const updated = db.update('productionOrders', order.id, { materialsPosted: true, reservationStatus: 'consumed' })
-    audit(user, 'consume', 'productionOrders', updated, { reservationIds: reservations.map((reservation) => reservation.id) })
+    const updated = consumeProductionMaterials(user, order)
     return send(res, 200, { productionOrder: updated, reservations: db.col('inventoryReservations').filter((reservation) => reservation.productionOrderId === order.id) })
   }
 
